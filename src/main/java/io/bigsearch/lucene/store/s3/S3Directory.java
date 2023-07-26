@@ -49,7 +49,7 @@ public class S3Directory extends MMapDirectory {
             super.deleteFile(file);
         }
 
-        System.out.printf("list after delete at init {}\n", super.listAll());
+        logger.debug("list after delete at init {}", super.listAll().toString());
     }
 
     /**
@@ -59,9 +59,8 @@ public class S3Directory extends MMapDirectory {
      */
     @Override
     public String[] listAll() {
-        if (logger.isDebugEnabled()) {
-            logger.info("listAll({})", bucket);
-        }
+        logger.debug("listAll({})", bucket);
+
         ArrayList<String> names = new ArrayList<>();
 
         try {
@@ -98,13 +97,13 @@ public class S3Directory extends MMapDirectory {
         } catch (Exception e) {
             logger.warn("{}", e.toString());
         }
-        System.out.printf("listAll " + names + "\n");
+        logger.debug("listAll {}", names);
         return names.toArray(new String[]{});
     }
 
     @Override
     public void deleteFile(final String name) throws IOException {
-        System.out.printf("deleteFile %s\n", name);
+        logger.debug("deleteFile {}", name);
 
         if (Files.exists(super.getDirectory().resolve(name))) {
             super.deleteFile(name);
@@ -115,7 +114,7 @@ public class S3Directory extends MMapDirectory {
 
     @Override
     public long fileLength(final String name) throws IOException {
-        System.out.printf("fileLength %s\n", name);
+        logger.debug("fileLength {}", name);
 
         if (Files.exists(super.getDirectory().resolve(name))) {
             return super.fileLength(name);
@@ -126,7 +125,7 @@ public class S3Directory extends MMapDirectory {
 
     @Override
     public IndexOutput createOutput(final String name, final IOContext context) throws IOException {
-        System.out.printf("createOutput %s\n", name);
+        logger.debug("createOutput {}", name);
 
         // Output always goes to local files first before sync to S3
         return super.createOutput(name, context);
@@ -134,7 +133,7 @@ public class S3Directory extends MMapDirectory {
 
     @Override
     public void sync(final Collection<String> names) throws IOException {
-        System.out.printf("sync %s\n", names);
+        logger.debug("sync {}", names);
         // Do nothing because syncMetadata() handles both durability and consistency of S3 data
 
         // Sync all the local files that have not been written to S3 yet
@@ -153,7 +152,7 @@ public class S3Directory extends MMapDirectory {
 
     @Override
     public void rename(final String from, final String to) throws IOException {
-        System.out.printf("rename %s -> %s\n", from, to);
+        logger.debug("rename {} -> {}", from, to);
 
         if (Files.exists(super.getDirectory().resolve(from))) {
             super.rename(from, to);
@@ -170,7 +169,7 @@ public class S3Directory extends MMapDirectory {
 
     @Override
     public IndexOutput createTempOutput(String prefix, String suffix, IOContext context) throws IOException {
-        System.out.printf("createTempOutput %s %s\n", prefix, suffix);
+        logger.debug("createTempOutput {} {}\n", prefix, suffix);
 
         // Temp output does not need to sync to S3
         return super.createTempOutput(prefix, suffix, context);
@@ -178,7 +177,7 @@ public class S3Directory extends MMapDirectory {
 
     @Override
     public void syncMetaData() throws IOException {
-        System.out.print("syncMetaData\n");
+        logger.debug("syncMetaData\n");
 
         // This is called for sync directory node,
         // so we need to sync all the local files that have not been written to S3 yet
@@ -188,7 +187,7 @@ public class S3Directory extends MMapDirectory {
                 // Do not sync lock file to S3
                 continue;
             }
-            System.out.printf("syncMetaData %s\n", name);
+            logger.debug("syncMetaData {}", name);
             Path filePath = super.getDirectory().resolve(name);
             // How about temp output?
             s3.putObject(b -> b.bucket(bucket).key(prefix + name), filePath);
@@ -199,7 +198,7 @@ public class S3Directory extends MMapDirectory {
 
     @Override
     public void close() throws IOException {
-        System.out.print("close\n");
+        logger.debug("close\n");
 
         super.close();
         // Sync all the local files that have not been written to S3 yet
@@ -219,7 +218,7 @@ public class S3Directory extends MMapDirectory {
 
     @Override
     public IndexInput openInput(final String name, final IOContext context) throws IOException {
-        System.out.printf("openInput %s\n", name);
+        logger.debug("openInput {}", name);
 
         if (Files.exists(super.getDirectory().resolve(name))) {
             return super.openInput(name, context);

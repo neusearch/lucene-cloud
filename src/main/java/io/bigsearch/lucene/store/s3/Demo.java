@@ -98,9 +98,9 @@ public class Demo {
 
             IndexWriter writer = new IndexWriter(dir, iwc);
             Demo demo = new Demo();
-            //for (int i = 0; i < 10000; i++) {
-                demo.indexDocs(writer, docDir);
-            //}
+
+            demo.indexDocs(writer, docDir);
+
             writer.commit();
 
             Date end = new Date();
@@ -183,6 +183,7 @@ public class Demo {
                     new TextField(
                             "contents",
                             new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))));
+            doc.add(new KnnFloatVectorField("vector", new float[]{0.4f, 0.5f}, VectorSimilarityFunction.COSINE));
 
             System.out.println("adding " + file);
             writer.addDocument(doc);

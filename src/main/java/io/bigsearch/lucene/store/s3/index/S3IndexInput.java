@@ -52,11 +52,11 @@ public class S3IndexInput extends IndexInput {
             try {
                 Files.createDirectory(this.cacheFilePath);
             } catch (IOException e) {
-                System.out.printf("S3IndexInput() %s\n", e.getMessage());
+                logger.error("S3IndexInput() {}", e.getMessage());
             }
             String[] files = s3Directory.listAll();
             if (!Arrays.asList(files).contains(name)) {
-                System.out.printf("S3IndexInput() file not found %s\n", name);
+                logger.error("S3IndexInput() file not found {}", name);
                 throw new FileNotFoundException();
             }
         }
@@ -77,7 +77,7 @@ public class S3IndexInput extends IndexInput {
             try {
                 Files.createDirectory(this.cacheFilePath);
             } catch (IOException e) {
-                System.out.printf("S3IndexInput() %s\n", e.getMessage());
+                logger.error("S3IndexInput() {}", e.getMessage());
                 throw e;
             }
         }
@@ -85,8 +85,7 @@ public class S3IndexInput extends IndexInput {
 
     @Override
     public byte readByte() throws IOException {
-        logger.debug("S3IndexInput.readByte ({} pos {})", name, position);
-        System.out.printf("S3IndexInput.readByte pos " + position + " length " + totalLength + " bucket " + s3Directory.getBucket() + " prefix " + s3Directory.getPrefix() + " name " + name + "\n");
+        logger.debug("S3IndexInput.readByte ({} pos {} totalLength {})", name, position, totalLength);
 
         // Calculate a page index for serving this one-byte-read request
         long pageIdx = position / CACHE_PAGE_SIZE;
@@ -115,7 +114,6 @@ public class S3IndexInput extends IndexInput {
             byte[] readBytes = res.readNBytes(readLen);
             if (readBytes.length != readLen) {
                 logger.error("# bytes read does not match the requested length");
-                System.out.print("# bytes read does not match the requested length\n");
             }
 
             // Copy the page to the local page file
@@ -133,8 +131,7 @@ public class S3IndexInput extends IndexInput {
 
     @Override
     public void readBytes(final byte[] buffer, int offset, int len) throws IOException {
-        logger.debug("S3IndexInput.readBytes ({} pos {} len {})", name, position, len);
-        System.out.printf("S3IndexInput.readBytes pos " + position + " length " + totalLength + " offset " + offset + " len " + len + " bucket " + s3Directory.getBucket() + " prefix " + s3Directory.getPrefix() + " name " + name + "\n");
+        logger.debug("S3IndexInput.readBytes ({} pos {} len {} totalLength {})", name, position, len, totalLength);
 
         if (len <= 0) {
             return;
@@ -176,7 +173,6 @@ public class S3IndexInput extends IndexInput {
                 byte[] readBytes = res.readNBytes(readLen);
                 if (readBytes.length != readLen) {
                     logger.error("# bytes read does not match the requested length");
-                    System.out.print("# bytes read does not match the requested length\n");
                 }
 
                 // Populate the local page file
@@ -203,12 +199,12 @@ public class S3IndexInput extends IndexInput {
     @Override
     public void close() throws IOException {
         // Do nothing
-        System.out.printf("close %s\n", name);
+        logger.debug("close {}", name);
     }
 
     @Override
     public synchronized long length() {
-        System.out.print("S3IndexInput.length\n");
+        logger.debug("S3IndexInput.length\n");
         if (isSlice) {
             return sliceLength;
         } else {
@@ -225,7 +221,7 @@ public class S3IndexInput extends IndexInput {
 
     @Override
     public long getFilePointer() {
-        System.out.print("S3IndexInput.getFilePointer\n");
+        logger.debug("S3IndexInput.getFilePointer\n");
         if (isSlice) {
             return position - sliceOffset;
         } else {
@@ -235,7 +231,7 @@ public class S3IndexInput extends IndexInput {
 
     @Override
     public void seek(final long pos) throws IOException {
-        System.out.printf("S3IndexInput.seek %d\n", pos);
+        logger.debug("S3IndexInput.seek {}", pos);
         if (isSlice) {
             position = sliceOffset + pos;
         } else {
@@ -246,7 +242,6 @@ public class S3IndexInput extends IndexInput {
     @Override
     public IndexInput slice(final String sliceDescription, final long offset, final long length) throws IOException {
         logger.debug("S3IndexInput.slice({} offset {} length {})", sliceDescription, offset, length);
-        System.out.printf("S3IndexInput.slice %s %d %d\n", sliceDescription, offset, length);
 
         return new S3IndexInput(name, sliceDescription, s3Directory, offset, length);
     }
