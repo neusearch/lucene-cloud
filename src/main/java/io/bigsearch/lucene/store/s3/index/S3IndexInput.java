@@ -190,7 +190,7 @@ public class S3IndexInput extends IndexInput {
             position += readBytes;
             remainingBytes -= readBytes;
             bufferPos += readBytes;
-            if (len != readBytes) {
+            if (readLen != readBytes) {
                 logger.error("readBytes ({} len {} readBytes {})", name, len, readBytes);
             }
 
