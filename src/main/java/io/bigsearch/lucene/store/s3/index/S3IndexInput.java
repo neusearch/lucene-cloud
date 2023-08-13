@@ -115,6 +115,7 @@ public class S3IndexInput extends IndexInput {
             if (readBytes.length != readLen) {
                 logger.error("# bytes read does not match the requested length");
             }
+            res.close();
 
             // Copy the page to the local page file
             Files.copy(new ByteArrayInputStream(readBytes), pageFilePath);
@@ -174,6 +175,7 @@ public class S3IndexInput extends IndexInput {
                 if (readBytes.length != readLen) {
                     logger.error("# bytes read does not match the requested length");
                 }
+                res.close();
 
                 // Populate the local page file
                 Files.copy(new ByteArrayInputStream(readBytes), pageFilePath);
