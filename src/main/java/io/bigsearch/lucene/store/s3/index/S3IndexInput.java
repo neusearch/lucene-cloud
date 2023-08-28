@@ -21,7 +21,7 @@ public class S3IndexInput extends IndexInput {
 
     private static final Logger logger = LoggerFactory.getLogger(S3IndexInput.class);
 
-    private static final long CACHE_PAGE_SIZE = 128 * 1024;
+    private static final long CACHE_PAGE_SIZE = 4 * 1024;
 
     private final String name;
 
@@ -29,7 +29,7 @@ public class S3IndexInput extends IndexInput {
 
     private final boolean isSlice;
     // lazy initialize the length
-    private long totalLength = -1;
+    private long totalLength;
 
     private final long sliceLength;
 
@@ -41,6 +41,7 @@ public class S3IndexInput extends IndexInput {
 
     public S3IndexInput(final String name, final S3Directory s3Directory) throws IOException {
         super("S3IndexInput(path=\"" + name + "\")");
+        this.totalLength = s3Directory.fileLength(name);
         this.s3Directory = s3Directory;
         this.isSlice = false;
         this.sliceLength = -1;
@@ -60,15 +61,17 @@ public class S3IndexInput extends IndexInput {
                 throw new FileNotFoundException();
             }
         }
+        logger.debug("S3IndexInput {}", name);
     }
 
     public S3IndexInput(final String name, final String sliceDesc, final S3Directory s3Directory,
-                        final long offset, final long length) throws IOException {
+                        final long offset, final long length, final long totalLength) throws IOException {
         super("S3IndexInput(path=" + name + ",slice=" + sliceDesc + ")");
         this.s3Directory = s3Directory;
         this.name = name;
         this.isSlice = true;
         this.sliceLength = length;
+        this.totalLength = totalLength;
         this.sliceOffset = offset;
         this.position = offset;
         this.cacheFilePath = s3Directory.getCachePath().resolve(name);
@@ -97,20 +100,16 @@ public class S3IndexInput extends IndexInput {
             // Cache miss
             int pageStartOffset = (int) (pageIdx * CACHE_PAGE_SIZE);
 
-            // Read the page from the corresponding S3 object
-            ResponseInputStream<GetObjectResponse> res = s3Directory.getS3().
-                    getObject(b -> b.bucket(s3Directory.getBucket()).key(s3Directory.getPrefix() + name));
-
-            // It is possible that the file length is accessed for the first time
-            if (totalLength == -1) {
-                totalLength = res.response().contentLength();
-            }
-
             // Calculate the remaining bytes of the object
             int readLen = (int) (totalLength > pageStartOffset + CACHE_PAGE_SIZE ?
                     CACHE_PAGE_SIZE : totalLength - pageStartOffset);
+
+            // Read the page from the corresponding S3 object
+            ResponseInputStream<GetObjectResponse> res = s3Directory.getS3().
+                    getObject(b -> b.bucket(s3Directory.getBucket()).key(s3Directory.getPrefix() + name)
+                            .range(String.format("bytes=%d-%d", pageStartOffset, pageStartOffset + readLen - 1)));
+
             // Read a range of the object into a buffer
-            res.skipNBytes(pageStartOffset);
             byte[] readBytes = res.readNBytes(readLen);
             if (readBytes.length != readLen) {
                 logger.error("# bytes read does not match the requested length");
@@ -119,6 +118,8 @@ public class S3IndexInput extends IndexInput {
 
             // Copy the page to the local page file
             Files.copy(new ByteArrayInputStream(readBytes), pageFilePath);
+
+            logger.debug("S3IndexInput.readByte from s3 ({} pos {} totalLength {} pageFilePath {} )", name, position, totalLength, pageFilePath);
         }
 
         // Read byte from the cached page file
@@ -156,21 +157,16 @@ public class S3IndexInput extends IndexInput {
                 // Cache miss
                 int pageStartOffset = (int) (pageIdx * CACHE_PAGE_SIZE);
 
-                // Read the page from the corresponding S3 object
-                ResponseInputStream<GetObjectResponse> res = s3Directory.getS3().
-                        getObject(b -> b.bucket(s3Directory.getBucket()).key(s3Directory.getPrefix() + name));
-
-                // It is possible that the file length is accessed for the first time
-                if (totalLength == -1) {
-                    totalLength = res.response().contentLength();
-                }
-
                 // Calculate the remaining bytes of the object
                 int readLen = (int) (totalLength > pageStartOffset + CACHE_PAGE_SIZE ?
                         CACHE_PAGE_SIZE : totalLength - pageStartOffset);
 
+                // Read the page from the corresponding S3 object
+                ResponseInputStream<GetObjectResponse> res = s3Directory.getS3().
+                        getObject(b -> b.bucket(s3Directory.getBucket()).key(s3Directory.getPrefix() + name)
+                                .range(String.format("bytes=%d-%d", pageStartOffset, pageStartOffset + readLen - 1)));
+
                 // Read a range of the object into a buffer
-                res.skipNBytes(pageStartOffset);
                 byte[] readBytes = res.readNBytes(readLen);
                 if (readBytes.length != readLen) {
                     logger.error("# bytes read does not match the requested length");
@@ -179,6 +175,8 @@ public class S3IndexInput extends IndexInput {
 
                 // Populate the local page file
                 Files.copy(new ByteArrayInputStream(readBytes), pageFilePath);
+
+                logger.debug("S3IndexInput.readBytes from s3 ({} pos {} len {} totalLength {} pageFilePath {} )", name, position, len, totalLength, pageFilePath);
             }
 
             // Copy bytes from the cached page file
@@ -243,8 +241,8 @@ public class S3IndexInput extends IndexInput {
 
     @Override
     public IndexInput slice(final String sliceDescription, final long offset, final long length) throws IOException {
-        logger.debug("S3IndexInput.slice({} offset {} length {})", sliceDescription, offset, length);
+        logger.debug("S3IndexInput.slice({} {} offset {} length {})", name, sliceDescription, offset, length);
 
-        return new S3IndexInput(name, sliceDescription, s3Directory, offset, length);
+        return new S3IndexInput(name, sliceDescription, s3Directory, offset, length, totalLength);
     }
 }
