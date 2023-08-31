@@ -12,13 +12,14 @@ import java.nio.file.Paths;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.Date;
+import java.util.Random;
+
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
 import org.apache.lucene.document.*;
 import org.apache.lucene.index.*;
 import org.apache.lucene.index.IndexWriterConfig.OpenMode;
 import org.apache.lucene.store.Directory;
-import org.apache.lucene.util.IOUtils;
 
 /**
  * Index all text files under a directory.
@@ -26,7 +27,7 @@ import org.apache.lucene.util.IOUtils;
  * <p>This is a command-line application demonstrating simple Lucene indexing. Run it with no
  * command-line arguments for usage information.
  */
-public class Demo {
+public class IndexDemo {
 
     /** Index all text files under a directory. */
     public static void main(String[] args) throws Exception {
@@ -76,7 +77,7 @@ public class Demo {
             Directory dir = new S3Directory(indexBucket, indexPrefix, Paths.get(bufferPath), Paths.get(cachePath));
             Analyzer analyzer = new StandardAnalyzer();
             IndexWriterConfig iwc = new IndexWriterConfig(analyzer);
-            //iwc.setUseCompoundFile(false);
+            iwc.setUseCompoundFile(false);
             MergePolicy mp = iwc.getMergePolicy();
 
             if (create) {
@@ -93,14 +94,27 @@ public class Demo {
             // buffer.  But if you do this, increase the max heap
             // size to the JVM (eg add -Xmx512m or -Xmx1g):
             //
-            iwc.setRAMBufferSizeMB(256.0);
+            //iwc.setRAMBufferSizeMB(256.0);
+            iwc.setRAMBufferSizeMB(1536.0);
             //iwc.setIndexDeletionPolicy(NoDeletionPolicy.INSTANCE);
 
             IndexWriter writer = new IndexWriter(dir, iwc);
-            Demo demo = new Demo();
+            //IndexDemo demo = new IndexDemo();
 
-            demo.indexDocs(writer, docDir);
+            System.out.println("start adding vectors");
+            for (int i = 0; i < 1000000; i++) {
+                //demo.indexDocs(writer, docDir);
+                Document doc = new Document();
+                float[] vector = new float[128];
+                Random rand = new Random();
+                for (int j = 0; j < 128; j++) {
+                    vector[j] = rand.nextFloat();
+                }
+                doc.add(new KnnFloatVectorField("vector", vector, VectorSimilarityFunction.COSINE));
 
+                writer.addDocument(doc);
+            }
+            System.out.println("start committing");
             writer.commit();
 
             Date end = new Date();
@@ -186,6 +200,38 @@ public class Demo {
             doc.add(new KnnFloatVectorField("vector", new float[]{0.4f, 0.5f}, VectorSimilarityFunction.COSINE));
 
             System.out.println("adding " + file);
+            writer.addDocument(doc);
+        }
+    }
+
+    void indexVector(IndexWriter writer, Path file, long lastModified) throws IOException {
+        try (InputStream stream = Files.newInputStream(file)) {
+            // make a new, empty document
+            Document doc = new Document();
+
+            // Add the path of the file as a field named "path".  Use a
+            // field that is indexed (i.e. searchable), but don't tokenize
+            // the field into separate words and don't index term frequency
+            // or positional information:
+            doc.add(new StoredField("path", file.toString()));
+
+            // Add the last modified date of the file a field named "modified".
+            // Use a LongField that is indexed with points and doc values, and is efficient
+            // for both filtering (LongField#newRangeQuery) and sorting
+            // (LongField#newSortField).  This indexes to milli-second resolution, which
+            // is often too fine.  You could instead create a number based on
+            // year/month/day/hour/minutes/seconds, down the resolution you require.
+            // For example the long value 2011021714 would mean
+            // February 17, 2011, 2-3 PM.
+            doc.add(new LongField("modified", lastModified));
+
+            float[] vector = new float[128];
+            Random rand = new Random();
+            for (int i = 0; i < 128; i++) {
+                vector[i] = rand.nextFloat();
+            }
+            doc.add(new KnnFloatVectorField("vector", vector, VectorSimilarityFunction.COSINE));
+
             writer.addDocument(doc);
         }
     }
