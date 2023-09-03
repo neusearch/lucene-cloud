@@ -1,10 +1,12 @@
 package io.bigsearch.lucene.store.s3;
 
+import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.util.*;
 
 import io.bigsearch.lucene.store.s3.index.S3IndexInput;
+import org.apache.commons.io.FileUtils;
 import org.apache.lucene.store.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -44,12 +46,14 @@ public class S3Directory extends MMapDirectory {
         this.cachePath = cachePath;
 
         // Delete all the local orphan files not synced to S3 in the fsPath
-        String[] files = super.listAll();
-        for (String file : files) {
-            super.deleteFile(file);
-        }
+        File bufferDir = bufferPath.toFile();
+        FileUtils.deleteDirectory(bufferDir);
+        Files.createDirectories(bufferPath);
 
-        logger.debug("list after delete at init {}", super.listAll().toString());
+        // Create cache directory if not exists
+        Files.createDirectories(cachePath);
+
+        logger.debug("S3Directory ({} {} {} {})", bucket, prefix, bufferPath, cachePath);
     }
 
     /**
