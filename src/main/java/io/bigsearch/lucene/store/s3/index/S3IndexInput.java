@@ -1,6 +1,7 @@
 package io.bigsearch.lucene.store.s3.index;
 
 import io.bigsearch.lucene.store.s3.S3Directory;
+import org.apache.commons.io.FileUtils;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.MMapDirectory;
@@ -12,7 +13,6 @@ import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Arrays;
 import java.util.HashMap;
 
 /**
@@ -32,7 +32,7 @@ public class S3IndexInput extends IndexInput {
 
     private final Path cacheFilePath;
 
-    private final HashMap<String,IndexInput> openCacheFileMap;
+    private final HashMap<Long,IndexInput> openCacheFileMap;
 
     private final MMapDirectory cacheDirectory;
 
@@ -48,6 +48,31 @@ public class S3IndexInput extends IndexInput {
 
     private final S3Directory s3Directory;
 
+    private IndexInput cacheMissHandler(long pageIdx) throws IOException {
+        logger.debug("S3IndexInput.cacheMissHandler ({} pos {} totalLength {} pageIdx {} )", name, position, totalLength, pageIdx);
+
+        int pageStartOffset = (int) (pageIdx * CACHE_PAGE_SIZE);
+        String pageIdxStr = Long.toString(pageIdx);
+        Path pageFilePath = cacheFilePath.resolve(pageIdxStr);
+
+        if (Files.notExists(pageFilePath)) {
+            // Calculate the remaining bytes of the object
+            int readLen = (int) (totalLength > pageStartOffset + CACHE_PAGE_SIZE ?
+                    CACHE_PAGE_SIZE : totalLength - pageStartOffset);
+
+            // Read the page from the corresponding S3 object
+            ResponseInputStream<GetObjectResponse> res = s3Directory.getS3().
+                    getObject(b -> b.bucket(s3Directory.getBucket()).key(s3Directory.getPrefix() + name)
+                            .range(String.format("bytes=%d-%d", pageStartOffset, pageStartOffset + readLen - 1)));
+
+            // Copy the object to a cache page file
+            FileUtils.copyInputStreamToFile(res, pageFilePath.toFile());
+            res.close();
+        }
+
+        return cacheDirectory.openInput(pageIdxStr, IOContext.DEFAULT);
+    }
+
     public S3IndexInput(final String name, final S3Directory s3Directory) throws IOException {
         super("S3IndexInput(path=\"" + name + "\")");
         this.totalLength = s3Directory.fileLength(name);
@@ -59,19 +84,6 @@ public class S3IndexInput extends IndexInput {
         this.sliceDesc = "";
         this.cacheFilePath = s3Directory.getCachePath().resolve(name);
         this.cacheDirectory = new MMapDirectory(cacheFilePath);
-        // Create a cache directory for this file if not exists
-        if (Files.notExists(this.cacheFilePath)) {
-            try {
-                Files.createDirectory(this.cacheFilePath);
-            } catch (IOException e) {
-                logger.error("S3IndexInput() {}", e.getMessage());
-            }
-            String[] files = s3Directory.listAll();
-            if (!Arrays.asList(files).contains(name)) {
-                logger.error("S3IndexInput() file not found {}", name);
-                throw new FileNotFoundException();
-            }
-        }
         this.openCacheFileMap = new HashMap<>();
         logger.debug("S3IndexInput {}", name);
     }
@@ -89,16 +101,8 @@ public class S3IndexInput extends IndexInput {
         this.position = offset;
         this.cacheFilePath = s3Directory.getCachePath().resolve(name);
         this.cacheDirectory = new MMapDirectory(cacheFilePath);
-        // Create a cache directory for this file if not exists
-        if (Files.notExists(this.cacheFilePath)) {
-            try {
-                Files.createDirectory(this.cacheFilePath);
-            } catch (IOException e) {
-                logger.error("S3IndexInput() {}", e.getMessage());
-                throw e;
-            }
-        }
         this.openCacheFileMap = new HashMap<>();
+        logger.debug("S3IndexInput {} {}", name, sliceDesc);
     }
 
     @Override
@@ -107,46 +111,18 @@ public class S3IndexInput extends IndexInput {
 
         // Calculate a page index for serving this one-byte-read request
         long pageIdx = position / CACHE_PAGE_SIZE;
-        String pageIdxStr = Long.toString(pageIdx);
         long pageOffset = position % CACHE_PAGE_SIZE;
-        Path pageFilePath = cacheFilePath.resolve(pageIdxStr);
 
         // Check whether the cached page file exists
-        if (Files.notExists(pageFilePath)) {
-            logger.debug("start S3IndexInput.readByte from s3 ({} pos {} totalLength {} pageFilePath {} )", name, position, totalLength, pageFilePath);
-            // Cache miss
-            int pageStartOffset = (int) (pageIdx * CACHE_PAGE_SIZE);
+        IndexInput cacheInput = openCacheFileMap.get(pageIdx);
+        if (cacheInput == null) {
+            cacheInput = cacheMissHandler(pageIdx);
 
-            // Calculate the remaining bytes of the object
-            int readLen = (int) (totalLength > pageStartOffset + CACHE_PAGE_SIZE ?
-                    CACHE_PAGE_SIZE : totalLength - pageStartOffset);
-
-            // Read the page from the corresponding S3 object
-            ResponseInputStream<GetObjectResponse> res = s3Directory.getS3().
-                    getObject(b -> b.bucket(s3Directory.getBucket()).key(s3Directory.getPrefix() + name)
-                            .range(String.format("bytes=%d-%d", pageStartOffset, pageStartOffset + readLen - 1)));
-
-            // Read a range of the object into a buffer
-            byte[] readBytes = res.readNBytes(readLen);
-            if (readBytes.length != readLen) {
-                logger.error("# bytes read does not match the requested length");
-            }
-            res.close();
-
-            // Copy the page to the local page file
-            Files.copy(new ByteArrayInputStream(readBytes), pageFilePath);
-
-            logger.debug("S3IndexInput.readByte from s3 ({} pos {} totalLength {} pageFilePath {} )", name, position, totalLength, pageFilePath);
+            // Create new entry for future access
+            openCacheFileMap.put(pageIdx, cacheInput);
         }
 
         // Read byte from the cached page file
-        IndexInput cacheInput = openCacheFileMap.get(pageIdxStr);
-        if (cacheInput == null) {
-            logger.debug("S3IndexInput.readByte open file cache miss ({})", pageFilePath);
-            cacheInput = cacheDirectory.openInput(pageIdxStr, IOContext.DEFAULT);
-            openCacheFileMap.put(pageIdxStr, cacheInput);
-        }
-
         cacheInput.seek(pageOffset);
         byte buf = cacheInput.readByte();
         position++;
@@ -164,55 +140,27 @@ public class S3IndexInput extends IndexInput {
         // Initialize position- and size-related variables
         int remainingBytes = len;
         int bufferPos = offset;
+        int readLen;
         long pageIdx, pageOffset, pageLen;
-        String pageIdxStr;
-        Path pageFilePath;
+        IndexInput cacheInput;
 
         while (remainingBytes > 0) {
             // Calculate the page index for serving this request
             pageIdx = position / CACHE_PAGE_SIZE;
-            pageIdxStr = Long.toString(pageIdx);
             pageOffset = position % CACHE_PAGE_SIZE;
             pageLen = CACHE_PAGE_SIZE - pageOffset;
-            pageFilePath = cacheFilePath.resolve(Long.toString(pageIdx));
 
             // Check whether the cached page file exists
-            if (Files.notExists(pageFilePath)) {
-                logger.debug("start S3IndexInput.readBytes from s3 ({} pos {} len {} totalLength {} pageFilePath {} )", name, position, len, totalLength, pageFilePath);
-                // Cache miss
-                int pageStartOffset = (int) (pageIdx * CACHE_PAGE_SIZE);
+            cacheInput = openCacheFileMap.get(pageIdx);
+            if (cacheInput == null) {
+                cacheInput = cacheMissHandler(pageIdx);
 
-                // Calculate the remaining bytes of the object
-                int readLen = (int) (totalLength > pageStartOffset + CACHE_PAGE_SIZE ?
-                        CACHE_PAGE_SIZE : totalLength - pageStartOffset);
-
-                // Read the page from the corresponding S3 object
-                ResponseInputStream<GetObjectResponse> res = s3Directory.getS3().
-                        getObject(b -> b.bucket(s3Directory.getBucket()).key(s3Directory.getPrefix() + name)
-                                .range(String.format("bytes=%d-%d", pageStartOffset, pageStartOffset + readLen - 1)));
-
-                // Read a range of the object into a buffer
-                byte[] readBytes = res.readNBytes(readLen);
-                if (readBytes.length != readLen) {
-                    logger.error("# bytes read does not match the requested length");
-                }
-                res.close();
-
-                // Populate the local page file
-                Files.copy(new ByteArrayInputStream(readBytes), pageFilePath);
-
-                logger.debug("S3IndexInput.readBytes from s3 ({} pos {} len {} totalLength {} pageFilePath {} )", name, position, len, totalLength, pageFilePath);
+                // Create new entry for future access
+                openCacheFileMap.put(pageIdx, cacheInput);
             }
 
             // Read bytes from the cached page file
-            IndexInput cacheInput = openCacheFileMap.get(pageIdxStr);
-            if (cacheInput == null) {
-                logger.debug("S3IndexInput.readByte open file cache miss ({})", pageFilePath);
-                cacheInput = cacheDirectory.openInput(pageIdxStr, IOContext.DEFAULT);
-                openCacheFileMap.put(pageIdxStr, cacheInput);
-            }
-
-            int readLen = (int) (remainingBytes > pageLen ?
+            readLen = (int) (remainingBytes > pageLen ?
                     pageLen : remainingBytes);
             cacheInput.seek(pageOffset);
             cacheInput.readBytes(buffer, bufferPos, readLen);
@@ -225,7 +173,7 @@ public class S3IndexInput extends IndexInput {
     @Override
     public void close() throws IOException {
         // Close all the opened cache page file
-        for (String key : openCacheFileMap.keySet()) {
+        for (Long key : openCacheFileMap.keySet()) {
             IndexInput cacheInput = openCacheFileMap.get(key);
             cacheInput.close();
         }
