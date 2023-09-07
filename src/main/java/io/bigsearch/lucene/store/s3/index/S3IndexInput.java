@@ -49,7 +49,7 @@ public class S3IndexInput extends IndexInput {
     private final S3Directory s3Directory;
 
     private IndexInput cacheMissHandler(long pageIdx) throws IOException {
-        logger.debug("S3IndexInput.cacheMissHandler ({} pos {} totalLength {} pageIdx {} )", name, position, totalLength, pageIdx);
+        //logger.debug("S3IndexInput.cacheMissHandler ({} pos {} totalLength {} pageIdx {} )", name, position, totalLength, pageIdx);
 
         int pageStartOffset = (int) (pageIdx * CACHE_PAGE_SIZE);
         String pageIdxStr = Long.toString(pageIdx);
@@ -107,7 +107,7 @@ public class S3IndexInput extends IndexInput {
 
     @Override
     public byte readByte() throws IOException {
-        logger.debug("S3IndexInput.readByte ({} {} pos {} totalLength {})", name, sliceDesc, position, totalLength);
+        //logger.debug("S3IndexInput.readByte ({} {} pos {} totalLength {})", name, sliceDesc, position, totalLength);
 
         // Calculate a page index for serving this one-byte-read request
         long pageIdx = position / CACHE_PAGE_SIZE;
@@ -131,7 +131,7 @@ public class S3IndexInput extends IndexInput {
 
     @Override
     public void readBytes(final byte[] buffer, int offset, int len) throws IOException {
-        logger.debug("S3IndexInput.readBytes ({} {} pos {} len {} totalLength {})", name, sliceDesc, position, len, totalLength);
+        //logger.debug("S3IndexInput.readBytes ({} {} pos {} len {} totalLength {})", name, sliceDesc, position, len, totalLength);
 
         if (len <= 0) {
             return;
