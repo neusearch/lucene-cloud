@@ -141,17 +141,13 @@ public class S3Directory extends MMapDirectory {
         // Do nothing because syncMetadata() handles both durability and consistency of S3 data
 
         // Sync all the local files that have not been written to S3 yet
-//        for (String name : names) {
-//            if (name.contains(".lock")) {
-//                // Do not sync lock file to S3
-//                continue;
-//            }
-//            Path filePath = super.getDirectory().resolve(name);
-//            if (Files.exists(filePath)) {
-//                s3.putObject(b -> b.bucket(bucket).key(prefix + name), filePath);
-//                super.deleteFile(name);
-//            }
-//        }
+       for (String name : names) {
+           Path filePath = super.getDirectory().resolve(name);
+           if (Files.exists(filePath)) {
+               s3.putObject(b -> b.bucket(bucket).key(prefix + name), filePath);
+               super.deleteFile(name);
+           }
+       }
     }
 
     @Override
@@ -183,21 +179,7 @@ public class S3Directory extends MMapDirectory {
     public void syncMetaData() throws IOException {
         logger.debug("syncMetaData\n");
 
-        // This is called for sync directory node,
-        // so we need to sync all the local files that have not been written to S3 yet
-        String[] names = super.listAll();
-        for (String name : names) {
-            if (name.contains(".lock")) {
-                // Do not sync lock file to S3
-                continue;
-            }
-            logger.debug("syncMetaData {}", name);
-            Path filePath = super.getDirectory().resolve(name);
-            // How about temp output?
-            s3.putObject(b -> b.bucket(bucket).key(prefix + name), filePath);
-            // This file is no more in local file system
-            super.deleteFile(name);
-        }
+        // This is called for sync directory node, so do nothing
     }
 
     @Override
@@ -205,19 +187,6 @@ public class S3Directory extends MMapDirectory {
         logger.debug("close\n");
 
         super.close();
-        // Sync all the local files that have not been written to S3 yet
-//        String[] names = super.listAll();
-//        for (String name : names) {
-//            if (name.contains(".lock")) {
-//                // Do not sync lock file to S3
-//                continue;
-//            }
-//            Path filePath = super.getDirectory().resolve(name);
-//            // How about temp output?
-//            s3.putObject(b -> b.bucket(bucket).key(prefix + name), filePath);
-//            // This file is no more in local file system
-//            super.deleteFile(name);
-//        }
     }
 
     @Override
