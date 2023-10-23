@@ -39,10 +39,13 @@ public class S3Directory extends MMapDirectory {
      *
      * @param bucket The bucket name
      */
-    public S3Directory(final String bucket, final String prefix, final Path bufferPath, final Path cachePath) throws IOException {
+    public S3Directory(final String bucket, String prefix, final Path bufferPath, final Path cachePath) throws IOException {
         super(bufferPath);
         this.bucket = bucket.toLowerCase();
-        this.prefix = prefix.toLowerCase();
+        while (prefix.endsWith("/")) {
+            prefix = prefix.substring(0, prefix.length() - 1);
+        }
+        this.prefix = prefix.toLowerCase() + "/";
         this.cachePath = cachePath;
 
         // Delete all the local orphan files not synced to S3 in the fsPath
