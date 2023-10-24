@@ -1,4 +1,4 @@
-package io.bigsearch.lucene.store.s3;
+package io.neusearch.lucene.store.s3;
 
 import java.io.BufferedReader;
 import java.io.IOException;
