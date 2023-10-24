@@ -2,7 +2,7 @@ plugins {
     id("java")
 }
 
-group = "io.bigsearch"
+group = "io.neusearch"
 version = "1.0-SNAPSHOT"
 
 repositories {

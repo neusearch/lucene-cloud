@@ -1,2 +1,1 @@
-rootProject.name = "lucene-s3directory"
-
+rootProject.name = "lucene-cloud"

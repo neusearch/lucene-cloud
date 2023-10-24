@@ -1,12 +1,13 @@
-package io.bigsearch.lucene.store.s3.index;
+package io.neusearch.lucene.store.s3.index;
 
-import io.bigsearch.lucene.store.s3.S3Directory;
 import org.apache.commons.io.FileUtils;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.MMapDirectory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import io.neusearch.lucene.store.s3.S3Directory;
 import software.amazon.awssdk.core.ResponseInputStream;
 import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 

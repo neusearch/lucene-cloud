@@ -1,4 +1,4 @@
-package io.bigsearch.lucene.store.s3;
+package io.neusearch.lucene.store.s3;
 
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
