@@ -90,6 +90,7 @@ public class S3Storage implements Storage {
     }
 
     public void readToFile(final String name, final File file, final int fileOffset, final int len) throws IOException {
+        logger.debug("readToFile {} -> {}", file.getPath(), buildS3PathFromName(name));
         ResponseInputStream<GetObjectResponse> res = s3.
                 getObject(b -> b.bucket(bucket).key(prefix + name)
                         .range(String.format("bytes=%d-%d", fileOffset, fileOffset + len - 1)));
@@ -100,6 +101,7 @@ public class S3Storage implements Storage {
     }
 
     public int readBytes(final String name, final byte[] buffer, final int bufOffset, final int fileOffset, final int len) throws IOException {
+        logger.debug("readBytes {} bufOffset {} fileOffset {} length {}", name, bufOffset, fileOffset, len);
         ResponseInputStream<GetObjectResponse> res = s3.
                 getObject(b -> b.bucket(bucket).key(prefix + name)
                         .range(String.format("bytes=%d-%d", fileOffset, fileOffset + len - 1)));
@@ -110,11 +112,17 @@ public class S3Storage implements Storage {
     }
 
     public void writeFromFile(final Path filePath) {
+        logger.debug("writeFromFile {} -> {}", filePath.toString(), buildS3PathFromName(filePath.getFileName().toString()));
         String name = filePath.getFileName().toString();
         s3.putObject(b -> b.bucket(bucket).key(prefix + name), filePath);
     }
 
     public void close() {
         logger.debug("close\n");
+        // Do nothing
+    }
+
+    private String buildS3PathFromName(String name) {
+        return bucket + "/" + prefix + "/" + name;
     }
 }

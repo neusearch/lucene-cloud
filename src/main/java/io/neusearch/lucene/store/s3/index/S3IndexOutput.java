@@ -2,11 +2,14 @@ package io.neusearch.lucene.store.s3.index;
 
 import io.neusearch.lucene.store.s3.buffer.Buffer;
 import org.apache.lucene.store.IndexOutput;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.util.zip.CRC32;
 
 public class S3IndexOutput extends IndexOutput {
+    private static final Logger logger = LoggerFactory.getLogger(S3IndexOutput.class);
 
     private final Buffer buffer;
 
@@ -30,6 +33,7 @@ public class S3IndexOutput extends IndexOutput {
      */
     @Override
     public void writeByte(byte b) throws IOException {
+        logger.debug("writeByte {}", getName());
         buffer.writeByte(getName(), b);
         crc.update(b);
         bytesWritten++;
@@ -44,6 +48,7 @@ public class S3IndexOutput extends IndexOutput {
      */
     @Override
     public void writeBytes(byte[] b, int offset, int length) throws IOException {
+        logger.debug("writeBytes {} offset {} length {}", getName(), offset, length);
         buffer.writeBytes(getName(), b, offset, length);
         crc.update(b, offset, length);
         bytesWritten += length;
@@ -51,11 +56,13 @@ public class S3IndexOutput extends IndexOutput {
 
     @Override
     public void close() throws IOException {
+        logger.debug("close {}", getName());
         buffer.closeFile(getName());
     }
 
     @Override
     public long getFilePointer() {
+        logger.debug("getFilePointer {} {}", getName(), bytesWritten);
         return bytesWritten;
     }
 

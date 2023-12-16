@@ -43,7 +43,7 @@ public class FSBuffer implements Buffer {
     }
 
     public void deleteFile(final String name) throws IOException {
-        logger.info("deleteFile {}", name);
+        logger.debug("deleteFile {}", name);
 
         fsDirectory.deleteFile(name);
     }
@@ -59,6 +59,7 @@ public class FSBuffer implements Buffer {
     }
 
     public void writeByte(String name, byte b) throws IOException {
+        logger.debug("writeByte {}", name);
         IndexOutput indexOutput = indexOutputMap.get(name);
         if (indexOutput == null) {
             throw new FileSystemException(name + "is not opened before writing");
@@ -67,6 +68,7 @@ public class FSBuffer implements Buffer {
     }
 
     public void writeBytes(String name, byte[] b, int offset, int length) throws IOException {
+        logger.debug("writeBytes {} offset {} length {}", name, offset, length);
         IndexOutput indexOutput = indexOutputMap.get(name);
         if (indexOutput == null) {
             throw new FileSystemException(name + "is not opened before writing");
@@ -75,6 +77,7 @@ public class FSBuffer implements Buffer {
     }
 
     public void rename(final String from, final String to) throws IOException {
+        logger.debug("rename {} -> {}", from, to);
         if (indexOutputMap.get(from) != null) {
             throw new RuntimeException(from + " exists in buffer during rename");
         }
@@ -82,6 +85,7 @@ public class FSBuffer implements Buffer {
     }
 
     public void sync(final Collection<String> names) throws IOException {
+        logger.debug("sync {}", names.toArray());
         // Sync all the local files that have not been written to S3 yet
         for (String name : names) {
             Path filePath = fsDirectory.getDirectory().resolve(name);
@@ -98,15 +102,18 @@ public class FSBuffer implements Buffer {
     }
 
     public void syncMetaData() {
+        logger.debug("syncMetadata");
         // Do nothing
     }
 
     public void openFile(String name) throws IOException {
+        logger.debug("openFile {}", name);
         IndexOutput indexOutput = fsDirectory.createOutput(name, IOContext.DEFAULT);
         indexOutputMap.put(name, indexOutput);
     }
 
     public void closeFile(String name) throws IOException {
+        logger.debug("closeFile {}", name);
         IndexOutput indexOutput = indexOutputMap.remove(name);
         if (indexOutput == null) {
             throw new NoSuchFileException(fsDirectory.getDirectory().resolve(name).toString());
@@ -115,6 +122,7 @@ public class FSBuffer implements Buffer {
     }
 
     public void close() throws IOException {
+        logger.debug("close");
         // Close all the opened index outputs
         for (String key : indexOutputMap.keySet()) {
             IndexOutput indexOutput = indexOutputMap.get(key);

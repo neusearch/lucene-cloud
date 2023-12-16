@@ -107,7 +107,7 @@ public class S3Directory extends BaseDirectory {
 
     @Override
     public void deleteFile(final String name) throws IOException {
-        logger.info("deleteFile {}", name);
+        logger.debug("deleteFile {}", name);
 
         storage.deleteFile(name);
         buffer.deleteFile(name);
@@ -126,7 +126,7 @@ public class S3Directory extends BaseDirectory {
 
     @Override
     public IndexOutput createOutput(final String name, final IOContext context) throws IOException {
-        logger.info("createOutput {}", name);
+        logger.debug("createOutput {}", name);
 
         // Output always goes to local files first before sync to S3
 
@@ -154,8 +154,8 @@ public class S3Directory extends BaseDirectory {
 
     @Override
     public void sync(final Collection<String> names) throws IOException {
-        logger.info("sync {}", names);
-
+        logger.debug("sync {}", names);
+        ensureOpen();
         buffer.sync(names);
     }
 
@@ -168,8 +168,8 @@ public class S3Directory extends BaseDirectory {
 
     @Override
     public void rename(final String from, final String to) throws IOException {
-        logger.info("rename {} -> {}", from, to);
-
+        logger.debug("rename {} -> {}", from, to);
+        ensureOpen();
         storage.rename(from, to);
         buffer.rename(from, to);
         cache.rename(from, to);
@@ -187,7 +187,7 @@ public class S3Directory extends BaseDirectory {
 
     @Override
     public IndexInput openInput(final String name, final IOContext context) throws IOException {
-        logger.info("openInput {}", name);
+        logger.debug("openInput {}", name);
 
         ensureOpen();
         return new S3IndexInput(name, cache);

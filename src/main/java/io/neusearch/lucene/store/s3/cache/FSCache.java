@@ -45,12 +45,14 @@ public class FSCache implements Cache {
     }
 
     public void deleteFile(final String name) throws IOException {
+        logger.debug("deleteFile {}", name);
         // Cached block files are managed within a directory
         File cacheFileDir = fsDirectory.getDirectory().resolve(name).toFile();
         FileUtils.deleteDirectory(cacheFileDir);
     }
 
     public void rename(final String from, final String to) throws IOException {
+        logger.debug("rename {} -> {}", from, to);
         File cacheFileDir = fsDirectory.getDirectory().resolve(from).toFile();
         File destCacheFileDir = fsDirectory.getDirectory().resolve(to).toFile();
         if (!cacheFileDir.renameTo(destCacheFileDir)) {
@@ -59,6 +61,7 @@ public class FSCache implements Cache {
     }
 
     public long fileLength(final String name) throws IOException {
+        logger.debug("fileLength {}", name);
         Long length = fileLengthMap.get(name);
         if (length == null) {
             length = buffer.fileLength(name);
@@ -72,7 +75,7 @@ public class FSCache implements Cache {
     }
 
     public byte readByte(final String name, long fileOffset) throws IOException {
-        logger.info("S3IndexInput.readByte ({} {})", name, fileOffset);
+        logger.debug("readByte ({} {})", name, fileOffset);
 
         // Calculate a page index for serving this one-byte-read request
         long pageIdx = fileOffset / CACHE_PAGE_SIZE;
@@ -94,7 +97,7 @@ public class FSCache implements Cache {
     }
 
     public void readBytes(final String name, final byte[] buffer, int bufOffset, long fileOffset, int len) throws IOException {
-        logger.info("S3IndexInput.readBytes ({} pos {} len {})", name, fileOffset, len);
+        logger.debug("readBytes ({} pos {} len {})", name, fileOffset, len);
 
         if (len <= 0) {
             return;
@@ -135,15 +138,18 @@ public class FSCache implements Cache {
     }
 
     public void openFile(String name) throws IOException {
+        logger.debug("openFile {}", name);
         // Create cache file directory
         Files.createDirectories(fsDirectory.getDirectory().resolve(name));
     }
 
     public void closeFile(String name) {
+        logger.debug("closeFile {}", name);
         // FIXME: memory usage optimization
     }
 
     public void close() throws IOException {
+        logger.debug("close");
         // Close all the opened index inputs
         for (String key : indexInputMap.keySet()) {
             IndexInput indexInput = indexInputMap.get(key);
