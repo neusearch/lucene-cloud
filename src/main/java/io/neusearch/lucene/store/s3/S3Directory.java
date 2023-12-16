@@ -2,6 +2,7 @@ package io.neusearch.lucene.store.s3;
 
 import java.io.IOException;
 import java.nio.file.FileAlreadyExistsException;
+import java.nio.file.Paths;
 import java.util.*;
 
 import io.neusearch.lucene.store.s3.buffer.Buffer;
@@ -26,7 +27,7 @@ import java.util.concurrent.atomic.AtomicLong;
  *
  * @author swkim86
  */
-public class S3Directory extends BaseDirectory {
+public class S3Directory extends FSDirectory {
     private static final Logger logger = LoggerFactory.getLogger(S3Directory.class);
 
     private final String storageType = "s3";
@@ -47,7 +48,7 @@ public class S3Directory extends BaseDirectory {
      * @param bucket The bucket name
      */
     public S3Directory(final String bucket, String prefix, final String bufferPath, final String cachePath) throws IOException {
-        super(FSLockFactory.getDefault());
+        super(Paths.get("/tmp"), FSLockFactory.getDefault());
 
         StorageFactory storageFactory = new StorageFactory();
         HashMap<String, Object> storageParams = new HashMap<>();
@@ -79,7 +80,7 @@ public class S3Directory extends BaseDirectory {
     @Override
     public String[] listAll() {
         logger.debug("listAll()");
-
+        ensureOpen();
         ArrayList<String> names = new ArrayList<>();
         try {
             // Get file list in storage
@@ -117,6 +118,7 @@ public class S3Directory extends BaseDirectory {
     @Override
     public long fileLength(final String name) throws IOException {
         logger.debug("fileLength {}", name);
+        ensureOpen();
         long length = buffer.fileLength(name);
         if (length == -1) {
             length = storage.fileLength(name);
@@ -162,7 +164,7 @@ public class S3Directory extends BaseDirectory {
     @Override
     public void syncMetaData() throws IOException {
         logger.debug("syncMetaData\n");
-
+        ensureOpen();
         buffer.syncMetaData();
     }
 
