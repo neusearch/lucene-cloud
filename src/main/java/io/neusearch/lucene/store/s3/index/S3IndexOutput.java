@@ -17,10 +17,13 @@ public class S3IndexOutput extends IndexOutput {
 
     private long bytesWritten = 0L;
 
+    private volatile boolean isOpen = false;
+
     public S3IndexOutput(final String name, final Buffer buffer) throws IOException {
         super("S3IndexOutput(name=" + name + ")", name);
         this.buffer = buffer;
         this.buffer.openFile(name);
+        this.isOpen = true;
     }
 
     /**
@@ -57,7 +60,10 @@ public class S3IndexOutput extends IndexOutput {
     @Override
     public void close() throws IOException {
         logger.debug("close {}", getName());
-        buffer.closeFile(getName());
+        if (isOpen) {
+            buffer.closeFile(getName());
+            isOpen = false;
+        }
     }
 
     @Override
@@ -68,6 +74,7 @@ public class S3IndexOutput extends IndexOutput {
 
     @Override
     public long getChecksum() {
+        logger.debug("getChecksum {} {}", getName(), crc.getValue());
         return crc.getValue();
     }
 }
