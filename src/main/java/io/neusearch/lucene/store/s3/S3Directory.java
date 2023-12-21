@@ -1,8 +1,7 @@
 package io.neusearch.lucene.store.s3;
 
 import java.io.IOException;
-import java.nio.file.FileAlreadyExistsException;
-import java.nio.file.Paths;
+import java.nio.file.*;
 import java.util.*;
 
 import io.neusearch.lucene.store.s3.buffer.Buffer;
@@ -94,7 +93,7 @@ public class S3Directory extends FSDirectory {
             if (filePaths.length > 0) {
                 names.addAll(Arrays.stream(filePaths).toList());
 
-                // Remove potential duplicates between S3 and local file system
+                // Remove potential duplicates between storage and buffer
                 names = new ArrayList<>(new HashSet<>(names));
                 // The output must be in sorted (UTF-16, java's {@link String#compareTo}) order.
                 names.sort(String::compareTo);
@@ -110,20 +109,23 @@ public class S3Directory extends FSDirectory {
     public void deleteFile(final String name) throws IOException {
         logger.debug("deleteFile {}", name);
 
-        storage.deleteFile(name);
-        buffer.deleteFile(name);
-        cache.deleteFile(name);
+        if (buffer.fileExists(name)) {
+            buffer.deleteFile(name);
+        } else {
+            // A file can be located either buffer or storage
+            storage.deleteFile(name);
+        }
+
+        if (cache.fileExists(name)) {
+            cache.deleteFile(name);
+        }
     }
 
     @Override
     public long fileLength(final String name) throws IOException {
         logger.debug("fileLength {}", name);
         ensureOpen();
-        long length = buffer.fileLength(name);
-        if (length == -1) {
-            length = storage.fileLength(name);
-        }
-        return length;
+        return cache.fileLength(name);
     }
 
     @Override
@@ -158,7 +160,13 @@ public class S3Directory extends FSDirectory {
     public void sync(final Collection<String> names) throws IOException {
         logger.debug("sync {}", names);
         ensureOpen();
-        buffer.sync(names);
+        // Sync all the buffered files that have not been written to storage yet
+        for (String name : names) {
+            if (buffer.fileExists(name)) {
+                buffer.sync(name);
+            }
+        }
+
     }
 
     @Override
@@ -172,9 +180,8 @@ public class S3Directory extends FSDirectory {
     public void rename(final String from, final String to) throws IOException {
         logger.debug("rename {} -> {}", from, to);
         ensureOpen();
+        // Rename is only called to a newly created file that is already synced to storage
         storage.rename(from, to);
-        buffer.rename(from, to);
-        cache.rename(from, to);
     }
 
     @Override

@@ -61,16 +61,19 @@ public class S3IndexInput extends IndexInput {
 
     @Override
     public byte readByte() throws IOException {
-        logger.debug("S3IndexInput.readByte ({} {} pos {} totalLength {})", name, sliceDesc, position, totalLength);
-
-        return cache.readByte(name, position);
+        //logger.debug("S3IndexInput.readByte ({} {} pos {} totalLength {})", name, sliceDesc, position, totalLength);
+        if (position > totalLength) {
+            logger.error("readByte() position {} > totalLength {}", position, totalLength);
+        }
+        return cache.readByte(name, position++);
     }
 
     @Override
     public void readBytes(final byte[] buffer, int offset, int len) throws IOException {
-        logger.debug("S3IndexInput.readBytes ({} {} pos {} len {} totalLength {})", name, sliceDesc, position, len, totalLength);
+        //logger.debug("S3IndexInput.readBytes ({} {} pos {} len {} totalLength {})", name, sliceDesc, position, len, totalLength);
 
         cache.readBytes(name, buffer, offset, position, len);
+        position += len;
     }
 
     @Override

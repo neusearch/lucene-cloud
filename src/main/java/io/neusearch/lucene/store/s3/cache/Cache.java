@@ -19,4 +19,6 @@ public interface Cache {
     void closeFile(final String name) throws IOException;
 
     void close() throws IOException;
+
+    boolean fileExists(final String name);
 }

@@ -1,7 +1,7 @@
 package io.neusearch.lucene.store.s3.buffer;
 
+import java.io.File;
 import java.io.IOException;
-import java.util.Collection;
 
 public interface Buffer {
 
@@ -15,7 +15,11 @@ public interface Buffer {
 
     void writeBytes(String name, byte[] b, int offset, int length) throws IOException;
 
-    void sync(final Collection<String> names) throws IOException;
+    void readToFile(final String name, final int fileOffset, final int len, final File file) throws IOException;
+
+    boolean fileExists(final String name);
+
+    void sync(final String name) throws IOException;
 
     void rename(final String from, final String to) throws IOException;
 

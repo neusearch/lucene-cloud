@@ -5,7 +5,10 @@ import org.apache.commons.io.FileUtils;
 import org.apache.lucene.store.FSDirectory;
 
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.nio.channels.FileChannel;
 import java.nio.file.*;
 import java.util.*;
 
@@ -76,6 +79,18 @@ public class FSBuffer implements Buffer {
         indexOutput.writeBytes(b, offset, length);
     }
 
+    public void readToFile(final String name, final int fileOffset, final int len, final File file) throws IOException {
+        FileChannel src = new FileInputStream(fsDirectory.getDirectory().resolve(name).toFile()).getChannel();
+        FileChannel dest = new FileOutputStream(file).getChannel();
+        src.transferTo(fileOffset, len, dest);
+        src.close();
+        dest.close();
+    }
+
+    public boolean fileExists(final String name) {
+        return Files.exists(fsDirectory.getDirectory().resolve(name));
+    }
+
     public void rename(final String from, final String to) throws IOException {
         logger.debug("rename {} -> {}", from, to);
         if (indexOutputMap.get(from) != null) {
@@ -84,20 +99,17 @@ public class FSBuffer implements Buffer {
         fsDirectory.rename(from, to);
     }
 
-    public void sync(final Collection<String> names) throws IOException {
-        logger.debug("sync {}", names.toArray());
-        // Sync all the local files that have not been written to S3 yet
-        for (String name : names) {
-            Path filePath = fsDirectory.getDirectory().resolve(name);
-            if (Files.exists(filePath)) {
-                if (indexOutputMap.get(name) != null) {
-                    throw new RuntimeException(name + " exists in buffer during sync");
-                }
-                storage.writeFromFile(filePath);
-                fsDirectory.deleteFile(name);
-            } else {
-                throw new NoSuchFileException(filePath.toString());
+    public void sync(final String name) throws IOException {
+        logger.debug("sync {}",name);
+        Path filePath = fsDirectory.getDirectory().resolve(name);
+        if (Files.exists(filePath)) {
+            if (indexOutputMap.get(name) != null) {
+                throw new RuntimeException(name + " opened in buffer during sync");
             }
+            storage.writeFromFile(filePath);
+            fsDirectory.deleteFile(name);
+        } else {
+            throw new NoSuchFileException(filePath.toString());
         }
     }
 

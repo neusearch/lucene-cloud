@@ -89,7 +89,8 @@ public class S3Storage implements Storage {
         }
     }
 
-    public void readToFile(final String name, final File file, final int fileOffset, final int len) throws IOException {
+    public void readToFile(final String name, final int fileOffset,
+                    final int len, final File file) throws IOException {
         logger.debug("readToFile {} -> {}", file.getPath(), buildS3PathFromName(name));
         ResponseInputStream<GetObjectResponse> res = s3.
                 getObject(b -> b.bucket(bucket).key(prefix + name)

@@ -16,15 +16,16 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.HashMap;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class FSCache implements Cache {
     private static final Logger logger = LoggerFactory.getLogger(FSCache.class);
 
     private static final long CACHE_PAGE_SIZE = 256 * 1024;
 
-    private final HashMap<String,IndexInput> indexInputMap;
+    private final ConcurrentHashMap<String,IndexInput> indexInputMap;
 
-    private final HashMap<String,Long> fileLengthMap;
+    private final ConcurrentHashMap<String,Long> fileLengthMap;
 
     private final FSDirectory fsDirectory;
 
@@ -40,8 +41,8 @@ public class FSCache implements Cache {
         this.buffer = (Buffer) params.get("buffer");
         this.storage = (Storage) params.get("storage");
 
-        this.indexInputMap = new HashMap<>();
-        this.fileLengthMap = new HashMap<>();
+        this.indexInputMap = new ConcurrentHashMap<>();
+        this.fileLengthMap = new ConcurrentHashMap<>();
     }
 
     public void deleteFile(final String name) throws IOException {
@@ -75,7 +76,7 @@ public class FSCache implements Cache {
     }
 
     public byte readByte(final String name, long fileOffset) throws IOException {
-        logger.debug("readByte ({} {})", name, fileOffset);
+        //logger.debug("readByte ({} {})", name, fileOffset);
 
         // Calculate a page index for serving this one-byte-read request
         long pageIdx = fileOffset / CACHE_PAGE_SIZE;
@@ -97,7 +98,7 @@ public class FSCache implements Cache {
     }
 
     public void readBytes(final String name, final byte[] buffer, int bufOffset, long fileOffset, int len) throws IOException {
-        logger.debug("readBytes ({} pos {} len {})", name, fileOffset, len);
+        //logger.debug("readBytes ({} pos {} len {})", name, fileOffset, len);
 
         if (len <= 0) {
             return;
@@ -172,10 +173,18 @@ public class FSCache implements Cache {
             int readLen = (int) (fileLength > pageStartOffset + CACHE_PAGE_SIZE ?
                     CACHE_PAGE_SIZE : fileLength - pageStartOffset);
 
-            // Read the page from the corresponding file in storage
-            storage.readToFile(name, pageFilePath.toFile(), pageStartOffset, readLen);
+            // Read the page from the corresponding file in buffer or storage
+            if (buffer.fileExists(name)) {
+                buffer.readToFile(name, pageStartOffset, readLen, pageFilePath.toFile());
+            } else {
+                storage.readToFile(name, pageStartOffset, readLen, pageFilePath.toFile());
+            }
         }
 
         return fsDirectory.openInput(key, IOContext.DEFAULT);
+    }
+
+    public boolean fileExists(final String name) {
+        return Files.exists(fsDirectory.getDirectory().resolve(name));
     }
 }
