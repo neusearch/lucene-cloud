@@ -4,20 +4,11 @@ import java.io.IOException;
 import java.nio.file.*;
 import java.util.*;
 
-import io.neusearch.lucene.store.s3.buffer.Buffer;
-import io.neusearch.lucene.store.s3.buffer.BufferFactory;
-import io.neusearch.lucene.store.s3.cache.Cache;
-import io.neusearch.lucene.store.s3.cache.CacheFactory;
-import io.neusearch.lucene.store.s3.index.S3IndexOutput;
 import io.neusearch.lucene.store.s3.storage.Storage;
 import io.neusearch.lucene.store.s3.storage.StorageFactory;
 import org.apache.lucene.store.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import io.neusearch.lucene.store.s3.index.S3IndexInput;
-
-import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * A S3 based implementation of a Lucene <code>Directory</code> allowing the storage of a Lucene index within S3.
@@ -29,24 +20,18 @@ import java.util.concurrent.atomic.AtomicLong;
 public class S3Directory extends FSDirectory {
     private static final Logger logger = LoggerFactory.getLogger(S3Directory.class);
 
-    private final String storageType = "s3";
-    private final String bufferType = "fs";
-    private final String cacheType = "fs";
+    private static final String storageType = "s3";
 
     private final Storage storage;
 
-    private final Buffer buffer;
-
-    private final Cache cache;
-
-    private final AtomicLong nextTempFileCounter = new AtomicLong();
+    private final FSDirectory localCache;
 
     /**
      * Creates a new S3 directory.
      *
      * @param bucket The bucket name
      */
-    public S3Directory(final String bucket, String prefix, final String bufferPath, final String cachePath) throws IOException {
+    public S3Directory(final String bucket, String prefix, final String localCachePath) throws IOException {
         super(Paths.get("/tmp"), FSLockFactory.getDefault());
 
         StorageFactory storageFactory = new StorageFactory();
@@ -55,20 +40,8 @@ public class S3Directory extends FSDirectory {
         storageParams.put("prefix", prefix);
         this.storage = storageFactory.createStorage(storageType, storageParams);
 
-        BufferFactory bufferFactory = new BufferFactory();
-        HashMap<String, Object> bufferParams = new HashMap<>();
-        bufferParams.put("bufferPath", bufferPath);
-        bufferParams.put("storage", this.storage);
-        this.buffer = bufferFactory.createBuffer(bufferType, bufferParams);
-
-        CacheFactory cacheFactory = new CacheFactory();
-        HashMap<String, Object> cacheParams = new HashMap<>();
-        cacheParams.put("cachePath", cachePath);
-        cacheParams.put("buffer", this.buffer);
-        cacheParams.put("storage", this.storage);
-        this.cache = cacheFactory.createCache(cacheType, cacheParams);
-
-        logger.debug("S3Directory ({} {} {} {})", bucket, prefix, bufferPath, cachePath);
+        this.localCache = FSDirectory.open(Paths.get(localCachePath));
+        logger.debug("S3Directory ({} {} {})", bucket, prefix, localCachePath);
     }
 
     /**
@@ -87,7 +60,7 @@ public class S3Directory extends FSDirectory {
             names.addAll(Arrays.stream(storagePaths).toList());
 
             // Get file list in buffer
-            String[] filePaths = buffer.listAll();
+            String[] filePaths = localCache.listAll();
 
             // Add buffer paths to list
             if (filePaths.length > 0) {
@@ -109,23 +82,22 @@ public class S3Directory extends FSDirectory {
     public void deleteFile(final String name) throws IOException {
         logger.debug("deleteFile {}", name);
 
-        if (buffer.fileExists(name)) {
-            buffer.deleteFile(name);
-        } else {
-            // A file can be located either buffer or storage
-            storage.deleteFile(name);
+        if (Files.exists(localCache.getDirectory().resolve(name))) {
+            localCache.deleteFile(name);
         }
-
-        if (cache.fileExists(name)) {
-            cache.deleteFile(name);
-        }
+        storage.deleteFile(name);
     }
 
     @Override
     public long fileLength(final String name) throws IOException {
         logger.debug("fileLength {}", name);
         ensureOpen();
-        return cache.fileLength(name);
+        if (Files.exists(localCache.getDirectory().resolve(name))) {
+            return localCache.fileLength(name);
+        } else {
+            // A file can be located either buffer or storage
+            return storage.fileLength(name);
+        }
     }
 
     @Override
@@ -135,7 +107,7 @@ public class S3Directory extends FSDirectory {
         // Output always goes to local files first before sync to S3
 
         ensureOpen();
-        return new S3IndexOutput(name, buffer);
+        return localCache.createOutput(name, context);
     }
 
     @Override
@@ -144,16 +116,7 @@ public class S3Directory extends FSDirectory {
 
         // Temp output does not need to sync to S3
         ensureOpen();
-        while (true) {
-            try {
-                String name = getTempFileName(prefix, suffix, nextTempFileCounter.getAndIncrement());
-                return new S3IndexOutput(name, buffer);
-            } catch (
-                    @SuppressWarnings("unused")
-                    FileAlreadyExistsException faee) {
-                // Retry with next incremented name
-            }
-        }
+        return localCache.createTempOutput(prefix, suffix, context);
     }
 
     @Override
@@ -162,25 +125,26 @@ public class S3Directory extends FSDirectory {
         ensureOpen();
         // Sync all the buffered files that have not been written to storage yet
         for (String name : names) {
-            if (buffer.fileExists(name)) {
-                buffer.sync(name);
+            Path filePath = localCache.getDirectory().resolve(name);
+            if (Files.exists(filePath)) {
+                storage.writeFromFile(filePath);
             }
         }
-
     }
 
     @Override
     public void syncMetaData() throws IOException {
         logger.debug("syncMetaData\n");
         ensureOpen();
-        buffer.syncMetaData();
     }
 
     @Override
     public void rename(final String from, final String to) throws IOException {
         logger.debug("rename {} -> {}", from, to);
         ensureOpen();
-        // Rename is only called to a newly created file that is already synced to storage
+        if (Files.exists(localCache.getDirectory().resolve(from))) {
+            localCache.rename(from, to);
+        }
         storage.rename(from, to);
     }
 
@@ -189,9 +153,8 @@ public class S3Directory extends FSDirectory {
         logger.debug("close\n");
 
         isOpen = false;
-        cache.close();
-        buffer.close();
         storage.close();
+        localCache.close();
     }
 
     @Override
@@ -199,7 +162,13 @@ public class S3Directory extends FSDirectory {
         logger.debug("openInput {}", name);
 
         ensureOpen();
-        return new S3IndexInput(name, cache);
+        Path filePath = localCache.getDirectory().resolve(name);
+        if (Files.notExists(filePath)) {
+            // Read file into local cache from storage
+            storage.readToFile(name, filePath.toFile());
+        }
+
+        return localCache.openInput(name, context);
     }
 
     /**

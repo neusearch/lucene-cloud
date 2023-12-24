@@ -15,8 +15,10 @@ public interface Storage {
 
     void deleteFile(final String name);
 
-    void readToFile(final String name, final int fileOffset,
+    void readRangeToFile(final String name, final int fileOffset,
                    final int len, final File file) throws IOException;
+
+    void readToFile(final String name, final File file) throws IOException;
 
     int readBytes(final String name, final byte[] buffer, final int bufOffset,
                   final int fileOffset, final int len) throws IOException;

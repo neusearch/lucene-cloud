@@ -89,12 +89,22 @@ public class S3Storage implements Storage {
         }
     }
 
-    public void readToFile(final String name, final int fileOffset,
+    public void readRangeToFile(final String name, final int fileOffset,
                     final int len, final File file) throws IOException {
         logger.debug("readToFile {} -> {}", file.getPath(), buildS3PathFromName(name));
         ResponseInputStream<GetObjectResponse> res = s3.
                 getObject(b -> b.bucket(bucket).key(prefix + name)
                         .range(String.format("bytes=%d-%d", fileOffset, fileOffset + len - 1)));
+
+        // Copy the object to a cache page file
+        FileUtils.copyInputStreamToFile(res, file);
+        res.close();
+    }
+
+    public void readToFile(final String name, final File file) throws IOException {
+        logger.debug("readToFile {} -> {}", buildS3PathFromName(name), file.getPath());
+        ResponseInputStream<GetObjectResponse> res = s3.
+                getObject(b -> b.bucket(bucket).key(prefix + name));
 
         // Copy the object to a cache page file
         FileUtils.copyInputStreamToFile(res, file);
