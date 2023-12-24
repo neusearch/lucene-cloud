@@ -2,10 +2,12 @@ package io.neusearch.lucene.store.s3;
 
 import java.io.IOException;
 import java.nio.file.*;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.*;
 
 import io.neusearch.lucene.store.s3.storage.Storage;
 import io.neusearch.lucene.store.s3.storage.StorageFactory;
+import org.apache.commons.io.FileUtils;
 import org.apache.lucene.store.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -26,12 +28,16 @@ public class S3Directory extends FSDirectory {
 
     private final FSDirectory localCache;
 
+    private final Long maxLocalCacheSize; // Cache capacity in bytes
+
+    private Long currentLocalCacheSize;
+
     /**
      * Creates a new S3 directory.
      *
      * @param bucket The bucket name
      */
-    public S3Directory(final String bucket, String prefix, final String localCachePath) throws IOException {
+    public S3Directory(final String bucket, String prefix, final String localCachePath, final Long localCacheSize) throws IOException {
         super(Paths.get("/tmp"), FSLockFactory.getDefault());
 
         StorageFactory storageFactory = new StorageFactory();
@@ -40,7 +46,12 @@ public class S3Directory extends FSDirectory {
         storageParams.put("prefix", prefix);
         this.storage = storageFactory.createStorage(storageType, storageParams);
 
-        this.localCache = FSDirectory.open(Paths.get(localCachePath));
+        Path localCacheDir = Paths.get(localCachePath);
+        // Cleanup cache directory
+        FileUtils.deleteDirectory(localCacheDir.toFile());
+        this.localCache = FSDirectory.open(localCacheDir);
+        this.maxLocalCacheSize = localCacheSize;
+        this.currentLocalCacheSize = 0L;
         logger.debug("S3Directory ({} {} {})", bucket, prefix, localCachePath);
     }
 
@@ -83,6 +94,7 @@ public class S3Directory extends FSDirectory {
         logger.debug("deleteFile {}", name);
 
         if (Files.exists(localCache.getDirectory().resolve(name))) {
+            currentLocalCacheSize -= localCache.fileLength(name);
             localCache.deleteFile(name);
         }
         storage.deleteFile(name);
@@ -127,6 +139,7 @@ public class S3Directory extends FSDirectory {
         for (String name : names) {
             Path filePath = localCache.getDirectory().resolve(name);
             if (Files.exists(filePath)) {
+                currentLocalCacheSize += localCache.fileLength(name);
                 storage.writeFromFile(filePath);
             }
         }
@@ -164,11 +177,57 @@ public class S3Directory extends FSDirectory {
         ensureOpen();
         Path filePath = localCache.getDirectory().resolve(name);
         if (Files.notExists(filePath)) {
+            long fileLength = fileLength(name);
+            long sizeAfter = currentLocalCacheSize + fileLength;
+            if (sizeAfter >= maxLocalCacheSize) {
+                // List access times of all the cached files
+                List<String> cachedFileNameList = getCachedFilesSizeSortedList();
+                // Reclaim cache space based on last access time
+                for (String fileName : cachedFileNameList) {
+                    currentLocalCacheSize -= localCache.fileLength(fileName);
+                    localCache.deleteFile(fileName);
+                    sizeAfter = currentLocalCacheSize + fileLength;
+                    if (sizeAfter < maxLocalCacheSize) {
+                        break;
+                    }
+                }
+            }
             // Read file into local cache from storage
             storage.readToFile(name, filePath.toFile());
+            currentLocalCacheSize += fileLength;
         }
 
         return localCache.openInput(name, context);
+    }
+
+    private List<String> getCachedFilesLruList() throws IOException {
+        List<String> fileNames = Arrays.asList(localCache.listAll());
+        fileNames.sort((o1, o2) -> {
+            try {
+                Path path1 = localCache.getDirectory().resolve(o1);
+                Path path2 = localCache.getDirectory().resolve(o2);
+                BasicFileAttributes attr1 = Files.readAttributes(path1, BasicFileAttributes.class);
+                BasicFileAttributes attr2 = Files.readAttributes(path2, BasicFileAttributes.class);
+                return attr1.lastAccessTime().compareTo(attr2.lastAccessTime());
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        });
+
+        return fileNames;
+    }
+
+    private List<String> getCachedFilesSizeSortedList() throws IOException {
+        List<String> fileNames = Arrays.asList(localCache.listAll());
+        fileNames.sort((o1, o2) -> {
+            try {
+                return Long.compare(localCache.fileLength(o1), localCache.fileLength(o2));
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        });
+
+        return fileNames.reversed();
     }
 
     /**
