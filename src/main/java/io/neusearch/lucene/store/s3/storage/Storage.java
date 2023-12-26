@@ -1,5 +1,7 @@
 package io.neusearch.lucene.store.s3.storage;
 
+import io.neusearch.lucene.store.s3.S3Directory;
+
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Path;
@@ -23,7 +25,7 @@ public interface Storage {
     int readBytes(final String name, final byte[] buffer, final int bufOffset,
                   final int fileOffset, final int len) throws IOException;
 
-    void readAllToDir(final String dir);
+    void readAllToDir(final String dir, final S3Directory s3Directory);
 
     void close() throws IOException;
 }

@@ -201,6 +201,18 @@ public class S3Directory extends FSDirectory {
         return localCache.openInput(name, context);
     }
 
+    public Long getCurrentLocalCacheSize() {
+        return currentLocalCacheSize;
+    }
+
+    public void setCurrentLocalCacheSize(Long size) {
+        currentLocalCacheSize = size;
+    }
+
+    public Long getMaxLocalCacheSize() {
+        return maxLocalCacheSize;
+    }
+
     private List<String> getCachedFilesLruList() throws IOException {
         List<String> fileNames = Arrays.asList(localCache.listAll());
         fileNames.sort((o1, o2) -> {
@@ -231,8 +243,8 @@ public class S3Directory extends FSDirectory {
         return fileNames.reversed();
     }
 
-    private void prePopulateCache(final String path) {
-        storage.readAllToDir(path);
+    private void prePopulateCache(final String localCachePath) {
+        storage.readAllToDir(localCachePath, this);
     }
     /**
      * *********************************************************************************************
