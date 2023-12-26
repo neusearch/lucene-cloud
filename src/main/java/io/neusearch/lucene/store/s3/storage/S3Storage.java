@@ -10,10 +10,15 @@ import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
 import software.amazon.awssdk.services.s3.model.ListObjectsV2Response;
 import software.amazon.awssdk.services.s3.model.S3Object;
 import software.amazon.awssdk.services.s3.paginators.ListObjectsV2Iterable;
+import software.amazon.awssdk.transfer.s3.S3TransferManager;
+import software.amazon.awssdk.transfer.s3.model.CompletedDirectoryDownload;
+import software.amazon.awssdk.transfer.s3.model.DirectoryDownload;
+import software.amazon.awssdk.transfer.s3.model.DownloadDirectoryRequest;
 
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.*;
 
 public class S3Storage implements Storage {
@@ -22,7 +27,9 @@ public class S3Storage implements Storage {
 
     private final String prefix;
 
-    private final S3Client s3 = S3Client.create();
+    private final S3Client s3;
+
+    S3TransferManager transferManager;
 
     public S3Storage(HashMap<String, Object> params) throws IOException {
         String bucket = params.get("bucket").toString();
@@ -33,6 +40,8 @@ public class S3Storage implements Storage {
             prefix = prefix.substring(0, prefix.length() - 1);
         }
         this.prefix = prefix.toLowerCase() + "/";
+        this.s3 = S3Client.create();
+        this.transferManager = S3TransferManager.create();
     }
 
     public String[] listAll() {
@@ -111,6 +120,21 @@ public class S3Storage implements Storage {
         res.close();
     }
 
+    public void readAllToDir(final String dir) {
+        DirectoryDownload directoryDownload =
+                transferManager.downloadDirectory(
+                        DownloadDirectoryRequest.builder()
+                                .destination(Paths.get(dir))
+                                .bucket(bucket)
+                                .listObjectsV2RequestTransformer(l -> l.prefix(prefix))
+                                .build());
+        // Wait for the transfer to complete
+        CompletedDirectoryDownload completedDirectoryDownload = directoryDownload.completionFuture().join();
+
+        // Print out any failed downloads
+        completedDirectoryDownload.failedTransfers().forEach(System.out::println);
+    }
+
     public int readBytes(final String name, final byte[] buffer, final int bufOffset, final int fileOffset, final int len) throws IOException {
         logger.debug("readBytes {} bufOffset {} fileOffset {} length {}", name, bufOffset, fileOffset, len);
         ResponseInputStream<GetObjectResponse> res = s3.
@@ -130,7 +154,8 @@ public class S3Storage implements Storage {
 
     public void close() {
         logger.debug("close\n");
-        // Do nothing
+        s3.close();
+        transferManager.close();
     }
 
     private String buildS3PathFromName(String name) {

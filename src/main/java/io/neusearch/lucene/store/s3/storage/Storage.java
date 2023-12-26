@@ -23,5 +23,7 @@ public interface Storage {
     int readBytes(final String name, final byte[] buffer, final int bufOffset,
                   final int fileOffset, final int len) throws IOException;
 
+    void readAllToDir(final String dir);
+
     void close() throws IOException;
 }

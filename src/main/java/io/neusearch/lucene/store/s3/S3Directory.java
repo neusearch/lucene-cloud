@@ -52,6 +52,7 @@ public class S3Directory extends FSDirectory {
         this.localCache = FSDirectory.open(localCacheDir);
         this.maxLocalCacheSize = localCacheSize;
         this.currentLocalCacheSize = 0L;
+        prePopulateCache(localCachePath);
         logger.debug("S3Directory ({} {} {})", bucket, prefix, localCachePath);
     }
 
@@ -230,6 +231,9 @@ public class S3Directory extends FSDirectory {
         return fileNames.reversed();
     }
 
+    private void prePopulateCache(final String path) {
+        storage.readAllToDir(path);
+    }
     /**
      * *********************************************************************************************
      * Setter/getter methods
