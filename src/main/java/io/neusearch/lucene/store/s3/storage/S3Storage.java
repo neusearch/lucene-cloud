@@ -1,5 +1,6 @@
 package io.neusearch.lucene.store.s3.storage;
 
+import io.neusearch.lucene.store.s3.S3Directory;
 import org.apache.commons.io.FileUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -10,10 +11,15 @@ import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
 import software.amazon.awssdk.services.s3.model.ListObjectsV2Response;
 import software.amazon.awssdk.services.s3.model.S3Object;
 import software.amazon.awssdk.services.s3.paginators.ListObjectsV2Iterable;
+import software.amazon.awssdk.transfer.s3.S3TransferManager;
+import software.amazon.awssdk.transfer.s3.model.DownloadFileRequest;
+import software.amazon.awssdk.transfer.s3.model.FileDownload;
+
 
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.*;
 
 public class S3Storage implements Storage {
@@ -22,7 +28,9 @@ public class S3Storage implements Storage {
 
     private final String prefix;
 
-    private final S3Client s3 = S3Client.create();
+    private final S3Client s3;
+
+    S3TransferManager transferManager;
 
     public S3Storage(HashMap<String, Object> params) throws IOException {
         String bucket = params.get("bucket").toString();
@@ -33,36 +41,48 @@ public class S3Storage implements Storage {
             prefix = prefix.substring(0, prefix.length() - 1);
         }
         this.prefix = prefix.toLowerCase() + "/";
+        this.s3 = S3Client.create();
+        this.transferManager = S3TransferManager.create();
     }
 
     public String[] listAll() {
         logger.debug("listAll()");
-
         ArrayList<String> names = new ArrayList<>();
 
+        ArrayList<String> rawNames = new ArrayList<>();
+        ArrayList<S3Object> s3ObjectList = listAllObjects();
+        for (S3Object object : s3ObjectList) {
+            rawNames.add(object.key());
+        }
+
+        // Remove prefix from S3 keys
+        for (String rawName : rawNames) {
+            if (rawName.equals(prefix)) {
+                continue;
+            }
+            names.add(rawName.substring(prefix.length()));
+        }
+
+        logger.debug("listAll {}", names);
+        return names.toArray(new String[]{});
+    }
+
+    public ArrayList<S3Object> listAllObjects() {
         try {
-            ArrayList<String> rawNames = new ArrayList<>();
             ListObjectsV2Request request = ListObjectsV2Request.builder()
                     .bucket(bucket)
                     .prefix(prefix)
                     .build();
             ListObjectsV2Iterable responses = s3.listObjectsV2Paginator(request);
+            ArrayList<S3Object> s3ObjectList = new ArrayList<>();
             for (ListObjectsV2Response response : responses) {
-                rawNames.addAll(response.contents().stream().map(S3Object::key).toList());
+                s3ObjectList.addAll(response.contents().stream().toList());
             }
-
-            // Remove prefix from S3 keys
-            for (String rawName : rawNames) {
-                if (rawName.equals(prefix)) {
-                    continue;
-                }
-                names.add(rawName.substring(prefix.length()));
-            }
+            return s3ObjectList;
         } catch (Exception e) {
-            logger.warn("{}", e.toString());
+            logger.error("{}", e.toString());
+            throw e;
         }
-        logger.debug("listAll {}", names);
-        return names.toArray(new String[]{});
     }
 
     public long fileLength(final String name) {
@@ -111,6 +131,38 @@ public class S3Storage implements Storage {
         res.close();
     }
 
+    public void readAllToDir(final String dir, final S3Directory s3Directory) {
+        Long currentDirSize = s3Directory.getCurrentLocalCacheSize();
+        Long maxDirSize = s3Directory.getMaxLocalCacheSize();
+        ArrayList<S3Object> objectList = listAllObjects();
+        ArrayList<FileDownload> fileDownloads = new ArrayList<>();
+        for (S3Object object : objectList) {
+            if (object.key().equals(prefix)) {
+                // Skip prefix object
+                continue;
+            }
+            if (currentDirSize + object.size() < maxDirSize) {
+                currentDirSize += object.size();
+                fileDownloads.add(
+                        transferManager.downloadFile(
+                                DownloadFileRequest.builder()
+                                        .getObjectRequest(b -> b.bucket(bucket).key(object.key()))
+                                        .destination(Paths.get(dir + "/" + object.key().substring(prefix.length())))
+                                        .build()
+                        )
+                );
+            } else {
+                logger.info("max cahce size is reached current {} object {} max {}", currentDirSize, object.size(), maxDirSize);
+                break;
+            }
+        }
+        // Wait for all the transfer to complete
+        for (FileDownload fileDownload : fileDownloads) {
+            fileDownload.completionFuture().join();
+        }
+        s3Directory.setCurrentLocalCacheSize(currentDirSize);
+    }
+
     public int readBytes(final String name, final byte[] buffer, final int bufOffset, final int fileOffset, final int len) throws IOException {
         logger.debug("readBytes {} bufOffset {} fileOffset {} length {}", name, bufOffset, fileOffset, len);
         ResponseInputStream<GetObjectResponse> res = s3.
@@ -130,7 +182,8 @@ public class S3Storage implements Storage {
 
     public void close() {
         logger.debug("close\n");
-        // Do nothing
+        s3.close();
+        transferManager.close();
     }
 
     private String buildS3PathFromName(String name) {

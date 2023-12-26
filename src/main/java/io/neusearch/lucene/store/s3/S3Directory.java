@@ -52,6 +52,7 @@ public class S3Directory extends FSDirectory {
         this.localCache = FSDirectory.open(localCacheDir);
         this.maxLocalCacheSize = localCacheSize;
         this.currentLocalCacheSize = 0L;
+        prePopulateCache(localCachePath);
         logger.debug("S3Directory ({} {} {})", bucket, prefix, localCachePath);
     }
 
@@ -200,6 +201,18 @@ public class S3Directory extends FSDirectory {
         return localCache.openInput(name, context);
     }
 
+    public Long getCurrentLocalCacheSize() {
+        return currentLocalCacheSize;
+    }
+
+    public void setCurrentLocalCacheSize(Long size) {
+        currentLocalCacheSize = size;
+    }
+
+    public Long getMaxLocalCacheSize() {
+        return maxLocalCacheSize;
+    }
+
     private List<String> getCachedFilesLruList() throws IOException {
         List<String> fileNames = Arrays.asList(localCache.listAll());
         fileNames.sort((o1, o2) -> {
@@ -230,6 +243,9 @@ public class S3Directory extends FSDirectory {
         return fileNames.reversed();
     }
 
+    private void prePopulateCache(final String localCachePath) {
+        storage.readAllToDir(localCachePath, this);
+    }
     /**
      * *********************************************************************************************
      * Setter/getter methods
