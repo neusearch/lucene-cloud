@@ -15,6 +15,8 @@ import software.amazon.awssdk.services.s3.paginators.ListObjectsV2Iterable;
 import software.amazon.awssdk.transfer.s3.S3TransferManager;
 import software.amazon.awssdk.transfer.s3.model.DownloadFileRequest;
 import software.amazon.awssdk.transfer.s3.model.FileDownload;
+import software.amazon.awssdk.transfer.s3.model.FileUpload;
+import software.amazon.awssdk.transfer.s3.model.UploadFileRequest;
 
 import java.io.File;
 import java.io.IOException;
@@ -242,6 +244,31 @@ public class S3Storage implements Storage {
         logger.debug("writeFromFile {} -> {}", filePath.toString(), buildS3PathFromName(filePath.getFileName().toString()));
         String name = filePath.getFileName().toString();
         s3.putObject(b -> b.bucket(bucket).key(prefix + name), filePath);
+    }
+
+    /**
+     * Writes a set of files to S3
+     *
+     * @param filePaths the list of absolute file paths
+     */
+    public void writeFromFiles(final List<Path> filePaths) {
+        logger.debug("writeFromFiles");
+        ArrayList<FileUpload> fileUploads = new ArrayList<>();
+        for (Path filePath : filePaths) {
+            String name = filePath.getFileName().toString();
+            fileUploads.add(
+                    transferManager.uploadFile(
+                            UploadFileRequest.builder()
+                                    .putObjectRequest(b -> b.bucket(bucket).key(prefix + name))
+                                    .source(filePath)
+                                    .build()
+                    )
+            );
+        }
+        // Wait for all the transfer to complete
+        for (FileUpload fileUpload : fileUploads) {
+            fileUpload.completionFuture().join();
+        }
     }
 
     /**

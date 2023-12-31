@@ -5,6 +5,7 @@ import io.neusearch.lucene.store.s3.S3Directory;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.List;
 
 /**
  * Interface to storage that durably stores Lucene data
@@ -38,6 +39,13 @@ public interface Storage {
      * @param filePath the absolute file path
      */
     void writeFromFile(final Path filePath);
+
+    /**
+     * Writes a set of files to storage
+     *
+     * @param filePaths the list of absolute file paths
+     */
+    void writeFromFiles(final List<Path> filePaths);
 
     /**
      * Deletes a file matched with the provided name

@@ -133,14 +133,16 @@ public class S3Directory extends FSDirectory {
     public void sync(final Collection<String> names) throws IOException {
         logger.debug("sync {}", names);
         ensureOpen();
-        // Sync all the buffered files that have not been written to storage yet
+        // Sync all the requested buffered files that have not been written to storage yet
+        ArrayList<Path> filePaths = new ArrayList<>();
         for (String name : names) {
             Path filePath = localCache.getDirectory().resolve(name);
             if (Files.exists(filePath)) {
                 currentLocalCacheSize += localCache.fileLength(name);
-                storage.writeFromFile(filePath);
+                filePaths.add(filePath);
             }
         }
+        storage.writeFromFiles(filePaths);
     }
 
     @Override
