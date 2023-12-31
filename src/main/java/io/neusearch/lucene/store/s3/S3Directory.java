@@ -16,8 +16,6 @@ import org.slf4j.LoggerFactory;
  * A S3 based implementation of a Lucene <code>Directory</code> allowing the storage of a Lucene index within S3.
  * The directory works against a single object prefix, where the binary data is stored in <code>objects</code>.
  * Each "object" has an entry in the S3.
- *
- * @author swkim86
  */
 public class S3Directory extends FSDirectory {
     private static final Logger logger = LoggerFactory.getLogger(S3Directory.class);
@@ -35,7 +33,11 @@ public class S3Directory extends FSDirectory {
     /**
      * Creates a new S3 directory.
      *
-     * @param bucket The bucket name
+     * @param bucket the bucket name
+     * @param prefix the specific path inside the bucket to store Lucene files
+     * @param localCachePath the local FS path to be used as a buffer/cache for a backend storage
+     * @param localCacheSize the capacity of local cache in bytes
+     * @throws IOException if initializing cache directory failed for reasosns
      */
     public S3Directory(final String bucket, String prefix, final String localCachePath, final Long localCacheSize) throws IOException {
         super(Paths.get("/tmp"), FSLockFactory.getDefault());
@@ -47,7 +49,7 @@ public class S3Directory extends FSDirectory {
         this.storage = storageFactory.createStorage(storageType, storageParams);
 
         Path localCacheDir = Paths.get(localCachePath);
-        // Cleanup cache directory
+        // Cleanup potentially staled cache directory
         FileUtils.deleteDirectory(localCacheDir.toFile());
         this.localCache = FSDirectory.open(localCacheDir);
         this.maxLocalCacheSize = localCacheSize;
@@ -56,11 +58,6 @@ public class S3Directory extends FSDirectory {
         logger.debug("S3Directory ({} {} {})", bucket, prefix, localCachePath);
     }
 
-    /**
-     * ********************************************************************************************
-     * DIRECTORY METHODS
-     * ********************************************************************************************
-     */
     @Override
     public String[] listAll() {
         logger.debug("listAll()");
@@ -147,9 +144,10 @@ public class S3Directory extends FSDirectory {
     }
 
     @Override
-    public void syncMetaData() throws IOException {
+    public void syncMetaData() {
         logger.debug("syncMetaData\n");
         ensureOpen();
+        // Do nothing
     }
 
     @Override
@@ -201,18 +199,13 @@ public class S3Directory extends FSDirectory {
         return localCache.openInput(name, context);
     }
 
-    public Long getCurrentLocalCacheSize() {
-        return currentLocalCacheSize;
-    }
-
-    public void setCurrentLocalCacheSize(Long size) {
-        currentLocalCacheSize = size;
-    }
-
-    public Long getMaxLocalCacheSize() {
-        return maxLocalCacheSize;
-    }
-
+    /**
+     * Gets an LRU list of locally cached files.
+     *
+     * @return the list of file names
+     * @throws IOException if there is an I/O error during file metadata read
+     *
+     */
     private List<String> getCachedFilesLruList() throws IOException {
         List<String> fileNames = Arrays.asList(localCache.listAll());
         fileNames.sort((o1, o2) -> {
@@ -230,6 +223,12 @@ public class S3Directory extends FSDirectory {
         return fileNames;
     }
 
+    /**
+     * Gets a sorted list by size of locally cached files.
+     *
+     * @return the list of file names
+     * @throws IOException if there is an I/O error during file metadata read
+     */
     private List<String> getCachedFilesSizeSortedList() throws IOException {
         List<String> fileNames = Arrays.asList(localCache.listAll());
         fileNames.sort((o1, o2) -> {
@@ -243,14 +242,41 @@ public class S3Directory extends FSDirectory {
         return fileNames.reversed();
     }
 
+    /**
+     * Pre-populates local cache directory to avoid storage reads in performance-critical paths.
+     *
+     * @param localCachePath the directory path of the local FS cache
+     */
     private void prePopulateCache(final String localCachePath) {
         storage.readAllToDir(localCachePath, this);
     }
+
     /**
-     * *********************************************************************************************
-     * Setter/getter methods
-     * *********************************************************************************************
+     * Gets the current size of the local FS cache.
+     *
+     * @return the currentLocalCacheSize
      */
+    public Long getCurrentLocalCacheSize() {
+        return currentLocalCacheSize;
+    }
+
+    /**
+     * Sets the current size of the local FS cache.
+     *
+     * @param size the size to be set as the current cache size
+     */
+    public void setCurrentLocalCacheSize(Long size) {
+        currentLocalCacheSize = size;
+    }
+
+    /**
+     * Gets the configured maximum size of the local FS cache.
+     *
+     * @return the maxLocalCacheSize
+     */
+    public Long getMaxLocalCacheSize() {
+        return maxLocalCacheSize;
+    }
 
     @Override
     public Set<String> getPendingDeletions() {

@@ -4,6 +4,7 @@ import io.neusearch.lucene.store.s3.S3Directory;
 import org.apache.commons.io.FileUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
 import software.amazon.awssdk.core.ResponseInputStream;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.GetObjectResponse;
@@ -15,13 +16,15 @@ import software.amazon.awssdk.transfer.s3.S3TransferManager;
 import software.amazon.awssdk.transfer.s3.model.DownloadFileRequest;
 import software.amazon.awssdk.transfer.s3.model.FileDownload;
 
-
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
 
+/**
+ * A Storage implementation for AWS S3.
+ */
 public class S3Storage implements Storage {
     private static final Logger logger = LoggerFactory.getLogger(S3Storage.class);
     private final String bucket;
@@ -32,7 +35,12 @@ public class S3Storage implements Storage {
 
     S3TransferManager transferManager;
 
-    public S3Storage(HashMap<String, Object> params) throws IOException {
+    /**
+     * Creates and initializes a new S3 Storage object.
+     *
+     * @param params the parameters required to initialize S3 clients, not null
+     */
+    public S3Storage(HashMap<String, Object> params) {
         String bucket = params.get("bucket").toString();
         String prefix = params.get("prefix").toString();
 
@@ -45,6 +53,11 @@ public class S3Storage implements Storage {
         this.transferManager = S3TransferManager.create();
     }
 
+    /**
+     * Lists all the object names excluding the prefix part in the configured S3 bucket prefix
+     *
+     * @return the object names array
+     */
     public String[] listAll() {
         logger.debug("listAll()");
         ArrayList<String> names = new ArrayList<>();
@@ -67,48 +80,70 @@ public class S3Storage implements Storage {
         return names.toArray(new String[]{});
     }
 
+    /**
+     * Lists all the metadata of the objects in the configured S3 buket prefix
+     *
+     * @return the object metadata array
+     */
     public ArrayList<S3Object> listAllObjects() {
-        try {
-            ListObjectsV2Request request = ListObjectsV2Request.builder()
-                    .bucket(bucket)
-                    .prefix(prefix)
-                    .build();
-            ListObjectsV2Iterable responses = s3.listObjectsV2Paginator(request);
-            ArrayList<S3Object> s3ObjectList = new ArrayList<>();
-            for (ListObjectsV2Response response : responses) {
-                s3ObjectList.addAll(response.contents().stream().toList());
-            }
-            return s3ObjectList;
-        } catch (Exception e) {
-            logger.error("{}", e.toString());
-            throw e;
+        ListObjectsV2Request request = ListObjectsV2Request.builder()
+                .bucket(bucket)
+                .prefix(prefix)
+                .build();
+        ListObjectsV2Iterable responses = s3.listObjectsV2Paginator(request);
+        ArrayList<S3Object> s3ObjectList = new ArrayList<>();
+        for (ListObjectsV2Response response : responses) {
+            s3ObjectList.addAll(response.contents().stream().toList());
         }
+        return s3ObjectList;
     }
 
+    /**
+     * Gets object length matched with the provided name
+     *
+     * @param name the name of object in the configured bucket prefix
+     * @return the object size in bytes
+     */
     public long fileLength(final String name) {
         logger.debug("fileLength {}", name);
 
         return s3.headObject(b -> b.bucket(bucket).key(prefix + name)).contentLength();
     }
 
+    /**
+     * Deletes object matched with the provided name
+     *
+     * @param name the name of object in the configured bucket prefix
+     */
     public void deleteFile(final String name) {
         logger.debug("deleteFile {}", name);
 
         s3.deleteObject(b -> b.bucket(bucket).key(prefix + name));
     }
 
+    /**
+     * Renames object based on the provided names
+     *
+     * @param from the object name to be renamed from
+     * @param to the object name to be renamed to
+     */
     public void rename(final String from, final String to) {
         logger.debug("rename {} -> {}", from, to);
         // Assume rename() is not called after commit due to the Lucene's immutable nature
-        try {
-            s3.copyObject(b -> b.sourceBucket(bucket).sourceKey(prefix + from).
-                    destinationBucket(bucket).destinationKey(prefix + to));
-            s3.deleteObject(b -> b.bucket(bucket).key(prefix + from));
-        } catch (Exception e) {
-            logger.error(null, e);
-        }
+        s3.copyObject(b -> b.sourceBucket(bucket).sourceKey(prefix + from).
+                destinationBucket(bucket).destinationKey(prefix + to));
+        s3.deleteObject(b -> b.bucket(bucket).key(prefix + from));
     }
 
+    /**
+     * Reads a range of bytes within an object and writes to a file
+     *
+     * @param name the object name
+     * @param fileOffset the range start offset
+     * @param len the length of the range
+     * @param file the File object to be written
+     * @throws IOException if writing to the file failed for reasons
+     */
     public void readRangeToFile(final String name, final int fileOffset,
                     final int len, final File file) throws IOException {
         logger.debug("readToFile {} -> {}", file.getPath(), buildS3PathFromName(name));
@@ -121,6 +156,13 @@ public class S3Storage implements Storage {
         res.close();
     }
 
+    /**
+     * Reads a whole object and writes to a file
+     *
+     * @param name the object name
+     * @param file the File object to be written
+     * @throws IOException if writing to the file failed for reasons
+     */
     public void readToFile(final String name, final File file) throws IOException {
         logger.debug("readToFile {} -> {}", buildS3PathFromName(name), file.getPath());
         ResponseInputStream<GetObjectResponse> res = s3.
@@ -131,6 +173,12 @@ public class S3Storage implements Storage {
         res.close();
     }
 
+    /**
+     * Reads all the objects and writes to a directory
+     *
+     * @param dir the directory to write all the objects
+     * @param s3Directory the caller's object to access/change the stats of the directory
+     */
     public void readAllToDir(final String dir, final S3Directory s3Directory) {
         Long currentDirSize = s3Directory.getCurrentLocalCacheSize();
         Long maxDirSize = s3Directory.getMaxLocalCacheSize();
@@ -163,6 +211,17 @@ public class S3Storage implements Storage {
         s3Directory.setCurrentLocalCacheSize(currentDirSize);
     }
 
+    /**
+     * Reads a range of bytes from an object and writes to a specific offset of a given buffer
+     *
+     * @param name the object name
+     * @param buffer the buffer to populate read data
+     * @param bufOffset the start offset inside the buffer
+     * @param fileOffset the start offset inside the object
+     * @param len the length to read from the object
+     * @return the read bytes
+     * @throws IOException if copying into buffer failed for reasons
+     */
     public int readBytes(final String name, final byte[] buffer, final int bufOffset, final int fileOffset, final int len) throws IOException {
         logger.debug("readBytes {} bufOffset {} fileOffset {} length {}", name, bufOffset, fileOffset, len);
         ResponseInputStream<GetObjectResponse> res = s3.
@@ -174,12 +233,20 @@ public class S3Storage implements Storage {
         return bytesRead;
     }
 
+    /**
+     * Writes an object using a given file
+     *
+     * @param filePath the absolute file path
+     */
     public void writeFromFile(final Path filePath) {
         logger.debug("writeFromFile {} -> {}", filePath.toString(), buildS3PathFromName(filePath.getFileName().toString()));
         String name = filePath.getFileName().toString();
         s3.putObject(b -> b.bucket(bucket).key(prefix + name), filePath);
     }
 
+    /**
+     * Releases the created S3 clients
+     */
     public void close() {
         logger.debug("close\n");
         s3.close();

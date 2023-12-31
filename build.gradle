@@ -1,0 +1,97 @@
+plugins {
+    id "java-library"
+    id "maven-publish"
+    id "signing"
+}
+
+description = "Lucene directory implementation optimized for cloud"
+group = "io.neusearch"
+version = "0.1.0-SNAPSHOT"
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation("org.apache.lucene:lucene-core:9.8.0")
+    implementation(platform("software.amazon.awssdk:bom:2.22.5"))
+    implementation("software.amazon.awssdk:s3")
+    implementation("software.amazon.awssdk:s3-transfer-manager")
+    implementation("software.amazon.awssdk.crt:aws-crt:0.29.1")
+    implementation("org.slf4j:slf4j-log4j12:2.0.7")
+    implementation("commons-io:commons-io:2.13.0")
+    testImplementation(platform("org.junit:junit-bom:5.9.1"))
+    testImplementation("org.junit.jupiter:junit-jupiter")
+    testImplementation("org.mockito:mockito-core:5.8.0")
+}
+
+java {
+    withJavadocJar()
+    withSourcesJar()
+}
+
+ext.isReleaseVersion = !version.endsWith("SNAPSHOT")
+
+publishing {
+    repositories {
+        maven {
+            def releaseRepo = "https://s01.oss.sonatype.org/service/local/staging/deploy/maven2/"
+            def snapshotRepo = "https://s01.oss.sonatype.org/content/repositories/snapshots/"
+
+            name = "OSSRH"
+            url = isReleaseVersion ? releaseRepo : snapshotRepo
+
+            credentials {
+                username = findProperty("ossrhUsername") ?: System.getenv("OSSRH_USERNAME")
+                password = findProperty("ossrhPassword") ?: System.getenv("OSSRH_PASSWORD")
+            }
+        }
+    }
+
+    publications {
+        mavenJava(MavenPublication) {
+            from components.java
+
+            pom {
+                groupId = project.group
+                name = project.name
+                description = project.description
+                url = "https://github.com/neusearch/lucene-cloud"
+                packaging = "jar" // jar is the default, but still set it to make it clear
+
+                licenses {
+                    license {
+                        name = "The Apache License, Version 2.0"
+                        url = "http://www.apache.org/licenses/LICENSE-2.0.txt"
+                    }
+                }
+
+                scm {
+                    url = "https://github.com/neusearch/lucene-cloud"
+                    connection = "scm:git://github.com:neusearch/lucene-cloud.git"
+                    developerConnection = "scm:git://github.com:neusearch/lucene-cloud.git"
+                }
+
+                developers {
+                    developer {
+                        id = "swkim86"
+                        name = "Sangwook Kim"
+                        email = "swkim86@gmail.com"
+                    }
+                }
+            }
+        }
+    }
+}
+
+signing {
+    sign publishing.publications.mavenJava
+}
+
+tasks.withType(Sign) {
+    onlyIf { isReleaseVersion }
+}
+
+tasks.test {
+    useJUnitPlatform()
+}
