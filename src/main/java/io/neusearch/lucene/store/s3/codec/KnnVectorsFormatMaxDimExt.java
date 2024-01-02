@@ -8,12 +8,20 @@ import org.apache.lucene.index.SegmentWriteState;
 
 import java.io.IOException;
 
+/**
+ * A KnnVectorsFormat implementation for extended dimension support.
+ */
 public class KnnVectorsFormatMaxDimExt extends KnnVectorsFormat {
 
     private static final short MAX_DIMS_COUNT = 4096;
 
     private final KnnVectorsFormat delegate;
 
+    /**
+     * Creates a new KnnVectorsFormatMaxDimExt.
+     *
+     * @param delegate the original implementation
+     */
     public KnnVectorsFormatMaxDimExt(KnnVectorsFormat delegate) {
         super(delegate.getName());
         this.delegate = delegate;
