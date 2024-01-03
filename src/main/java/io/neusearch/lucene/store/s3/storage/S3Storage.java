@@ -46,11 +46,11 @@ public class S3Storage implements Storage {
         String bucket = params.get("bucket").toString();
         String prefix = params.get("prefix").toString();
 
-        this.bucket = bucket.toLowerCase();
+        this.bucket = bucket;
         while (prefix.endsWith("/")) {
             prefix = prefix.substring(0, prefix.length() - 1);
         }
-        this.prefix = prefix.toLowerCase() + "/";
+        this.prefix = prefix + "/";
         this.s3 = S3Client.create();
         this.transferManager = S3TransferManager.create();
     }
