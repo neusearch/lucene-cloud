@@ -37,7 +37,7 @@ public class S3Directory extends FSDirectory {
      * @param prefix the specific path inside the bucket to store Lucene files
      * @param localCachePath the local FS path to be used as a buffer/cache for a backend storage
      * @param localCacheSize the capacity of local cache in bytes
-     * @throws IOException if initializing cache directory failed for reasosns
+     * @throws IOException if initializing cache directory failed for reasons
      */
     public S3Directory(final String bucket, String prefix, final String localCachePath, final Long localCacheSize) throws IOException {
         super(Paths.get("/tmp"), FSLockFactory.getDefault());
