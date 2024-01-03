@@ -6,7 +6,7 @@ plugins {
 
 description = "Lucene directory implementation optimized for cloud"
 group = "io.neusearch"
-version = "0.1.0"
+version = "0.1.1"
 
 repositories {
     mavenCentral()
