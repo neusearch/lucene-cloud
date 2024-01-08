@@ -1,17 +1,14 @@
 package io.neusearch.lucene.store.s3.storage;
 
 import io.neusearch.lucene.store.s3.S3Directory;
-import org.apache.commons.io.FileUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import software.amazon.awssdk.core.ResponseInputStream;
-import software.amazon.awssdk.services.s3.S3Client;
-import software.amazon.awssdk.services.s3.model.GetObjectResponse;
-import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
-import software.amazon.awssdk.services.s3.model.ListObjectsV2Response;
-import software.amazon.awssdk.services.s3.model.S3Object;
-import software.amazon.awssdk.services.s3.paginators.ListObjectsV2Iterable;
+import software.amazon.awssdk.core.ResponseBytes;
+import software.amazon.awssdk.core.async.AsyncResponseTransformer;
+import software.amazon.awssdk.services.s3.S3AsyncClient;
+import software.amazon.awssdk.services.s3.model.*;
+import software.amazon.awssdk.services.s3.paginators.ListObjectsV2Publisher;
 import software.amazon.awssdk.transfer.s3.S3TransferManager;
 import software.amazon.awssdk.transfer.s3.model.DownloadFileRequest;
 import software.amazon.awssdk.transfer.s3.model.FileDownload;
@@ -20,6 +17,7 @@ import software.amazon.awssdk.transfer.s3.model.UploadFileRequest;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
@@ -33,7 +31,7 @@ public class S3Storage implements Storage {
 
     private final String prefix;
 
-    private final S3Client s3;
+    private final S3AsyncClient s3Client;
 
     S3TransferManager transferManager;
 
@@ -51,8 +49,8 @@ public class S3Storage implements Storage {
             prefix = prefix.substring(0, prefix.length() - 1);
         }
         this.prefix = prefix + "/";
-        this.s3 = S3Client.create();
-        this.transferManager = S3TransferManager.create();
+        this.s3Client = S3AsyncClient.crtBuilder().build();
+        this.transferManager = S3TransferManager.builder().s3Client(this.s3Client).build();
     }
 
     /**
@@ -88,15 +86,9 @@ public class S3Storage implements Storage {
      * @return the object metadata array
      */
     public ArrayList<S3Object> listAllObjects() {
-        ListObjectsV2Request request = ListObjectsV2Request.builder()
-                .bucket(bucket)
-                .prefix(prefix)
-                .build();
-        ListObjectsV2Iterable responses = s3.listObjectsV2Paginator(request);
+        ListObjectsV2Publisher responses = s3Client.listObjectsV2Paginator(r -> r.bucket(bucket).prefix(prefix).build());
         ArrayList<S3Object> s3ObjectList = new ArrayList<>();
-        for (ListObjectsV2Response response : responses) {
-            s3ObjectList.addAll(response.contents().stream().toList());
-        }
+        responses.contents().subscribe(s3ObjectList::add).join();
         return s3ObjectList;
     }
 
@@ -109,7 +101,7 @@ public class S3Storage implements Storage {
     public long fileLength(final String name) {
         logger.debug("fileLength {}", name);
 
-        return s3.headObject(b -> b.bucket(bucket).key(prefix + name)).contentLength();
+        return s3Client.headObject(b -> b.bucket(bucket).key(prefix + name)).join().contentLength();
     }
 
     /**
@@ -120,7 +112,7 @@ public class S3Storage implements Storage {
     public void deleteFile(final String name) {
         logger.debug("deleteFile {}", name);
 
-        s3.deleteObject(b -> b.bucket(bucket).key(prefix + name));
+        s3Client.deleteObject(b -> b.bucket(bucket).key(prefix + name)).join();
     }
 
     /**
@@ -131,10 +123,10 @@ public class S3Storage implements Storage {
      */
     public void rename(final String from, final String to) {
         logger.debug("rename {} -> {}", from, to);
-        // Assume rename() is not called after commit due to the Lucene's immutable nature
-        s3.copyObject(b -> b.sourceBucket(bucket).sourceKey(prefix + from).
-                destinationBucket(bucket).destinationKey(prefix + to));
-        s3.deleteObject(b -> b.bucket(bucket).key(prefix + from));
+
+        s3Client.copyObject(b -> b.sourceBucket(bucket).sourceKey(prefix + from).
+                destinationBucket(bucket).destinationKey(prefix + to)).join();
+        deleteFile(from);
     }
 
     /**
@@ -149,13 +141,10 @@ public class S3Storage implements Storage {
     public void readRangeToFile(final String name, final int fileOffset,
                     final int len, final File file) throws IOException {
         logger.debug("readToFile {} -> {}", file.getPath(), buildS3PathFromName(name));
-        ResponseInputStream<GetObjectResponse> res = s3.
-                getObject(b -> b.bucket(bucket).key(prefix + name)
-                        .range(String.format("bytes=%d-%d", fileOffset, fileOffset + len - 1)));
 
-        // Copy the object to a cache page file
-        FileUtils.copyInputStreamToFile(res, file);
-        res.close();
+        s3Client.getObject(req -> req.bucket(bucket).key(prefix + name)
+                        .range(String.format("bytes=%d-%d", fileOffset, fileOffset + len - 1)),
+                AsyncResponseTransformer.toFile(file.toPath())).join();
     }
 
     /**
@@ -167,12 +156,9 @@ public class S3Storage implements Storage {
      */
     public void readToFile(final String name, final File file) throws IOException {
         logger.debug("readToFile {} -> {}", buildS3PathFromName(name), file.getPath());
-        ResponseInputStream<GetObjectResponse> res = s3.
-                getObject(b -> b.bucket(bucket).key(prefix + name));
 
-        // Copy the object to a cache page file
-        FileUtils.copyInputStreamToFile(res, file);
-        res.close();
+        s3Client.getObject(req -> req.bucket(bucket).key(prefix + name),
+                AsyncResponseTransformer.toFile(file.toPath())).join();
     }
 
     /**
@@ -226,13 +212,15 @@ public class S3Storage implements Storage {
      */
     public int readBytes(final String name, final byte[] buffer, final int bufOffset, final int fileOffset, final int len) throws IOException {
         logger.debug("readBytes {} bufOffset {} fileOffset {} length {}", name, bufOffset, fileOffset, len);
-        ResponseInputStream<GetObjectResponse> res = s3.
-                getObject(b -> b.bucket(bucket).key(prefix + name)
-                        .range(String.format("bytes=%d-%d", fileOffset, fileOffset + len - 1)));
 
-        int bytesRead = res.readNBytes(buffer, bufOffset, len);
-        res.close();
-        return bytesRead;
+        ResponseBytes<GetObjectResponse> b = s3Client.getObject(req -> req.bucket(bucket).key(prefix + name)
+                        .range(String.format("bytes=%d-%d", fileOffset, fileOffset + len - 1)),
+                AsyncResponseTransformer.toBytes()).join();
+        int actualLen;
+        try (InputStream is = b.asInputStream()) {
+            actualLen = is.read(buffer, bufOffset, len);
+        }
+        return actualLen;
     }
 
     /**
@@ -242,8 +230,9 @@ public class S3Storage implements Storage {
      */
     public void writeFromFile(final Path filePath) {
         logger.debug("writeFromFile {} -> {}", filePath.toString(), buildS3PathFromName(filePath.getFileName().toString()));
+
         String name = filePath.getFileName().toString();
-        s3.putObject(b -> b.bucket(bucket).key(prefix + name), filePath);
+        s3Client.putObject(b -> b.bucket(bucket).key(prefix + name), filePath).join();
     }
 
     /**
@@ -276,7 +265,8 @@ public class S3Storage implements Storage {
      */
     public void close() {
         logger.debug("close\n");
-        s3.close();
+
+        s3Client.close();
         transferManager.close();
     }
 
