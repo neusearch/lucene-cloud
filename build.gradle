@@ -13,7 +13,8 @@ repositories {
 }
 
 dependencies {
-    implementation("org.apache.lucene:lucene-core:9.8.0")
+    implementation("org.apache.lucene:lucene-core:9.9.1")
+    implementation("org.apache.lucene:lucene-backward-codecs:9.9.1")
     implementation(platform("software.amazon.awssdk:bom:2.22.5"))
     implementation("software.amazon.awssdk:s3")
     implementation("software.amazon.awssdk:s3-transfer-manager")
