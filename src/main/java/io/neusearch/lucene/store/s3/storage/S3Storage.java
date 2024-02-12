@@ -33,6 +33,7 @@ public class S3Storage implements Storage {
     private final S3AsyncClient s3Client;
 
     S3TransferManager transferManager;
+    private final Map<String,S3Object> cachedObjectMap;
 
     /**
      * Creates and initializes a new S3 Storage object.
@@ -50,6 +51,7 @@ public class S3Storage implements Storage {
         this.prefix = prefix + "/";
         this.s3Client = S3AsyncClient.crtBuilder().build();
         this.transferManager = S3TransferManager.builder().s3Client(this.s3Client).build();
+        this.cachedObjectMap = new HashMap<>();
     }
 
     /**
@@ -60,19 +62,18 @@ public class S3Storage implements Storage {
     public String[] listAll() {
         logger.debug("listAll()");
         ArrayList<String> names = new ArrayList<>();
-
-        ArrayList<String> rawNames = new ArrayList<>();
         ArrayList<S3Object> s3ObjectList = listAllObjects();
         for (S3Object object : s3ObjectList) {
-            rawNames.add(object.key());
-        }
-
-        // Remove prefix from S3 keys
-        for (String rawName : rawNames) {
-            if (rawName.equals(prefix)) {
+            if (object.key().equals(prefix)) {
                 continue;
             }
-            names.add(rawName.substring(prefix.length()));
+
+            // Remove prefix from S3 keys
+            String name = object.key().substring(prefix.length());
+            names.add(name);
+
+            // Update metadata cache map
+            cachedObjectMap.put(name, object);
         }
 
         logger.debug("listAll {}", names);
@@ -100,7 +101,12 @@ public class S3Storage implements Storage {
     public long fileLength(final String name) {
         logger.debug("fileLength {}", name);
 
-        return s3Client.headObject(b -> b.bucket(bucket).key(prefix + name)).join().contentLength();
+        S3Object cachedObject = cachedObjectMap.get(name);
+        if (cachedObject != null) {
+            return cachedObject.size();
+        } else {
+            return s3Client.headObject(b -> b.bucket(bucket).key(prefix + name)).join().contentLength();
+        }
     }
 
     /**
@@ -112,6 +118,7 @@ public class S3Storage implements Storage {
         logger.debug("deleteFile {}", name);
 
         s3Client.deleteObject(b -> b.bucket(bucket).key(prefix + name)).join();
+        cachedObjectMap.remove(name);
     }
 
     /**
@@ -125,6 +132,10 @@ public class S3Storage implements Storage {
 
         s3Client.copyObject(b -> b.sourceBucket(bucket).sourceKey(prefix + from).
                 destinationBucket(bucket).destinationKey(prefix + to)).join();
+        S3Object cachedObject = cachedObjectMap.get(from);
+        if (cachedObject != null) {
+            cachedObjectMap.put(to, cachedObject);
+        }
         deleteFile(from);
     }
 
