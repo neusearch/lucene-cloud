@@ -1,5 +1,6 @@
 package io.neusearch.lucene.store.s3.storage;
 
+import io.neusearch.lucene.store.s3.cache.FSCache;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -9,17 +10,15 @@ import software.amazon.awssdk.services.s3.S3AsyncClient;
 import software.amazon.awssdk.services.s3.model.*;
 import software.amazon.awssdk.services.s3.paginators.ListObjectsV2Publisher;
 import software.amazon.awssdk.transfer.s3.S3TransferManager;
-import software.amazon.awssdk.transfer.s3.model.DownloadFileRequest;
-import software.amazon.awssdk.transfer.s3.model.FileDownload;
-import software.amazon.awssdk.transfer.s3.model.FileUpload;
-import software.amazon.awssdk.transfer.s3.model.UploadFileRequest;
+import software.amazon.awssdk.transfer.s3.model.*;
 
-import java.io.File;
-import java.io.IOException;
-import java.io.InputStream;
+import java.io.*;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
+
+import static io.neusearch.lucene.store.s3.index.S3IndexInput.BLOCK_SIZE;
 
 /**
  * A Storage implementation for AWS S3.
@@ -199,6 +198,63 @@ public class S3Storage implements Storage {
         }
     }
 
+    public void readAllInitialBlocksToCache(FSCache fsCache,
+                                            Map<String, Map<Long,Boolean>> cachedFileMap) throws IOException {
+        ArrayList<S3Object> objectList = listAllObjects();
+
+        List<IODescriptor> ioDescs = new ArrayList<>();
+
+        // Submit all the requests asynchronously
+        for (S3Object object : objectList) {
+            if (object.key().equals(prefix)) {
+                // Skip prefix object
+                continue;
+            }
+
+            // Read the first block from S3
+            final long firstLen = object.size() > BLOCK_SIZE ? BLOCK_SIZE : object.size();
+            String name = object.key().substring(prefix.length());
+            ioDescs.add(new IODescriptor(name, 0, firstLen,
+                    s3Client.getObject(req -> req.bucket(bucket).key(object.key())
+                            .range(String.format("bytes=%d-%d", 0, firstLen - 1)),
+                    AsyncResponseTransformer.toBytes())));
+
+            if (object.size() > BLOCK_SIZE) {
+                // This object is larger than the BLOCK_SIZE
+                long lastOffset = (object.size() / BLOCK_SIZE) * BLOCK_SIZE;
+                long lastLen = object.size() > lastOffset + BLOCK_SIZE ?
+                        BLOCK_SIZE : object.size() - lastOffset;
+
+                ioDescs.add(new IODescriptor(name, lastOffset, lastLen,
+                        s3Client.getObject(req -> req.bucket(bucket).key(object.key())
+                                        .range(String.format("bytes=%d-%d", lastOffset, lastOffset + lastLen - 1)),
+                                AsyncResponseTransformer.toBytes())));
+            }
+        }
+
+        // Write all the blocks to the corresponding positions of the files
+        RandomAccessFile file;
+        Map<Long, Boolean> cachedBlockMap;
+        for (IODescriptor ioDesc : ioDescs) {
+            file = new RandomAccessFile(fsCache.getDirectory()
+                    .resolve(ioDesc.name).toFile(), "rw");
+
+            ResponseBytes<GetObjectResponse> respBytes = ioDesc.resp.join();
+
+            file.seek(ioDesc.offset);
+            file.write(respBytes.asByteArray());
+            file.close();
+
+            // Update cached block map
+            cachedBlockMap =
+                    cachedFileMap.computeIfAbsent(ioDesc.name, k -> new HashMap<>());
+
+            long blockIdx = ioDesc.offset / BLOCK_SIZE;
+            cachedBlockMap.put(blockIdx, true);
+            //logger.info("name {} offset {} length {} blockIdx {}", ioDesc.name, ioDesc.offset, ioDesc.length, blockIdx);
+        }
+    }
+
     /**
      * Reads a range of bytes from an object and writes to a specific offset of a given buffer
      *
@@ -308,5 +364,9 @@ public class S3Storage implements Storage {
         public void setPrefix(String prefix) {
             this.prefix = prefix;
         }
+    }
+
+    private record IODescriptor(String name, long offset, long length,
+                                CompletableFuture<ResponseBytes<GetObjectResponse>> resp) {
     }
 }

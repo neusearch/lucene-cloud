@@ -14,13 +14,13 @@ import java.util.Map;
 public class S3IndexInput extends IndexInput {
 
     private static final Logger logger = LoggerFactory.getLogger(S3IndexInput.class);
-    private static final long BLOCK_SIZE = 256 * 1024;
+    public static final long BLOCK_SIZE = 256 * 1024;
     private final String name;
     private final Storage storage;
     private final Map<Long,Boolean> cachedBlockMap;
     private final RandomAccessFile file;
     private final IndexInput indexInput;
-    private final long baseOffset;
+    private final long sliceOffset;
     private final long baseLength;
     private final boolean isSlice;
 
@@ -30,7 +30,7 @@ public class S3IndexInput extends IndexInput {
 
         super("S3IndexInput(path=\"" + name + "\")");
         this.name = name;
-        this.baseOffset = 0L;
+        this.sliceOffset = 0L;
         this.baseLength = storage.fileLength(name);
         this.storage = storage;
         this.file = new RandomAccessFile(fsCache.getDirectory().resolve(name).toFile(), "rw");
@@ -46,14 +46,14 @@ public class S3IndexInput extends IndexInput {
 
     public S3IndexInput(final String name, final String sliceDesc, final Storage storage,
                         final RandomAccessFile file, final Map<Long,Boolean> cachedBlockMap,
-                        final long baseOffset, final long baseLength,
+                        final long sliceOffset, final long baseLength,
                         final IndexInput sliceInput) {
         super("S3IndexInput(path=" + name + ",slice=" + sliceDesc + ")");
         this.name = name;
         this.storage = storage;
         this.file = file;
         this.cachedBlockMap = cachedBlockMap;
-        this.baseOffset = baseOffset;
+        this.sliceOffset = sliceOffset;
         this.indexInput = sliceInput;
         this.baseLength = baseLength;
         this.isSlice = true;
@@ -92,7 +92,7 @@ public class S3IndexInput extends IndexInput {
         int remainingBytes = len;
         int readLen;
         long blockIdx, blockOffset, blockLen;
-        long fileOffset = baseOffset + indexInput.getFilePointer();
+        long fileOffset = sliceOffset + indexInput.getFilePointer();
 
         while (remainingBytes > 0) {
             // Calculate the block index for serving this request
@@ -141,7 +141,7 @@ public class S3IndexInput extends IndexInput {
     public IndexInput slice(final String sliceDescription, final long offset, final long length) throws IOException {
         logger.debug("S3IndexInput.slice({} {} offset {} length {})", name, sliceDescription, offset, length);
 
-        long baseOffset = offset + this.baseOffset;
+        long baseOffset = offset + this.sliceOffset;
         return new S3IndexInput(name, sliceDescription,
                 storage, file, cachedBlockMap, baseOffset, baseLength,
                 indexInput.slice(sliceDescription, offset, length));
@@ -157,8 +157,8 @@ public class S3IndexInput extends IndexInput {
     }
 
     private void cacheMissHandler(long blockIdx) throws IOException {
-        logger.debug("S3IndexInput.cacheMissHandler ({} baseOffset {} baseLength {} blockIdx {} )",
-                name, baseOffset, baseLength, blockIdx);
+        logger.debug("S3IndexInput.cacheMissHandler ({} sliceOffset {} baseLength {} blockIdx {} )",
+                name, sliceOffset, baseLength, blockIdx);
 
         // Calculate the start offset within the file
         int offset = (int) (blockIdx * BLOCK_SIZE);

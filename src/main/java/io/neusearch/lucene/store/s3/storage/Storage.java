@@ -1,9 +1,12 @@
 package io.neusearch.lucene.store.s3.storage;
 
+import io.neusearch.lucene.store.s3.cache.FSCache;
+
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Interface to storage that durably stores Lucene data
@@ -95,6 +98,9 @@ public interface Storage {
      * @param dir the directory to write all the files in storage
      */
     void readAllToDir(final String dir);
+
+    void readAllInitialBlocksToCache(FSCache fsCache,
+                                     Map<String, Map<Long,Boolean>> cachedFileMap) throws IOException;
 
     /**
      * Releases the created storage

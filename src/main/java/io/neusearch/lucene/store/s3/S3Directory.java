@@ -48,7 +48,7 @@ public class S3Directory extends FSDirectory {
 
         this.storage = storageFactory.createStorage(storageType, s3Config);
         this.fsCache = new FSCache(Paths.get(fsCachePath));
-        prePopulateCache(fsCachePath);
+        prePopulateCache(fsCache);
 
         logger.debug("S3Directory ({} {})", s3Config, fsCachePath);
     }
@@ -230,13 +230,11 @@ public class S3Directory extends FSDirectory {
     /**
      * Pre-populates local cache directory to avoid storage reads in performance-critical paths.
      *
-     * @param fsCachePath the directory path of the local FS cache
+     * @param fsCache the FS cache object
      */
-    private void prePopulateCache(final String fsCachePath) {
-        //storage.readAllInitialBlocks(fsCachePath, this);
-
-        // Populate the cached block maps
-
+    private void prePopulateCache(FSCache fsCache) throws IOException {
+        // Populate all the first and last blocks to cache from storage
+        storage.readAllInitialBlocksToCache(fsCache, cachedFileMap);
     }
 
     @Override
