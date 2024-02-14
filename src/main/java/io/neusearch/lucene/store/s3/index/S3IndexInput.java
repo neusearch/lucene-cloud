@@ -14,7 +14,7 @@ import java.util.Map;
 public class S3IndexInput extends IndexInput {
 
     private static final Logger logger = LoggerFactory.getLogger(S3IndexInput.class);
-    public static final long BLOCK_SIZE = 256 * 1024;
+    public static final long BLOCK_SIZE = 1024 * 1024;
     private final String name;
     private final Storage storage;
     private final Map<Long,Boolean> cachedBlockMap;
