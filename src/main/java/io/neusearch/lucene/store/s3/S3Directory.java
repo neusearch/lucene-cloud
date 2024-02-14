@@ -4,10 +4,13 @@ import java.io.IOException;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
+import io.neusearch.lucene.store.s3.cache.FSCache;
+import io.neusearch.lucene.store.s3.index.S3IndexInput;
+import io.neusearch.lucene.store.s3.storage.S3Storage;
 import io.neusearch.lucene.store.s3.storage.Storage;
 import io.neusearch.lucene.store.s3.storage.StorageFactory;
-import org.apache.commons.io.FileUtils;
 import org.apache.lucene.store.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -24,38 +27,30 @@ public class S3Directory extends FSDirectory {
 
     private final Storage storage;
 
-    private final FSDirectory localCache;
+    private final FSCache fsCache;
 
-    private final Long maxLocalCacheSize; // Cache capacity in bytes
+    private static final Map<String,Boolean> bufferedFileMap = new HashMap<>();
 
-    private Long currentLocalCacheSize;
+    private static final ConcurrentHashMap<String,Map<Long,Boolean>> cachedFileMap = new ConcurrentHashMap<>();
+
+    private static final StorageFactory storageFactory = new StorageFactory();
 
     /**
      * Creates a new S3 directory.
      *
-     * @param bucket the bucket name
-     * @param prefix the specific path inside the bucket to store Lucene files
-     * @param localCachePath the local FS path to be used as a buffer/cache for a backend storage
-     * @param localCacheSize the capacity of local cache in bytes
+     * @param s3Config the S3 configurations
+     * @param fsCachePath the FS path to be used as a buffer/cache for a backend storage
      * @throws IOException if initializing cache directory failed for reasons
      */
-    public S3Directory(final String bucket, String prefix, final String localCachePath, final Long localCacheSize) throws IOException {
+    public S3Directory(final S3Storage.Config s3Config,
+                       final String fsCachePath) throws IOException {
         super(Paths.get("/tmp"), FSLockFactory.getDefault());
 
-        StorageFactory storageFactory = new StorageFactory();
-        HashMap<String, Object> storageParams = new HashMap<>();
-        storageParams.put("bucket", bucket);
-        storageParams.put("prefix", prefix);
-        this.storage = storageFactory.createStorage(storageType, storageParams);
+        this.storage = storageFactory.createStorage(storageType, s3Config);
+        this.fsCache = new FSCache(Paths.get(fsCachePath));
+        prePopulateCache(fsCache);
 
-        Path localCacheDir = Paths.get(localCachePath);
-        // Cleanup potentially staled cache directory
-        FileUtils.deleteDirectory(localCacheDir.toFile());
-        this.localCache = FSDirectory.open(localCacheDir);
-        this.maxLocalCacheSize = localCacheSize;
-        this.currentLocalCacheSize = 0L;
-        prePopulateCache(localCachePath);
-        logger.debug("S3Directory ({} {} {})", bucket, prefix, localCachePath);
+        logger.debug("S3Directory ({} {})", s3Config, fsCachePath);
     }
 
     @Override
@@ -68,12 +63,12 @@ public class S3Directory extends FSDirectory {
             String[] storagePaths = storage.listAll();
             names.addAll(Arrays.stream(storagePaths).toList());
 
-            // Get file list in buffer
-            String[] filePaths = localCache.listAll();
-
             // Add buffer paths to list
-            if (filePaths.length > 0) {
-                names.addAll(Arrays.stream(filePaths).toList());
+            if (!bufferedFileMap.isEmpty()) {
+                for (Map.Entry<String,Boolean> entry : bufferedFileMap.entrySet()) {
+                    String name = entry.getKey();
+                    names.add(name);
+                }
 
                 // Remove potential duplicates between storage and buffer
                 names = new ArrayList<>(new HashSet<>(names));
@@ -91,10 +86,7 @@ public class S3Directory extends FSDirectory {
     public void deleteFile(final String name) throws IOException {
         logger.debug("deleteFile {}", name);
 
-        if (Files.exists(localCache.getDirectory().resolve(name))) {
-            currentLocalCacheSize -= localCache.fileLength(name);
-            localCache.deleteFile(name);
-        }
+        fsCache.deleteFile(name);
         storage.deleteFile(name);
     }
 
@@ -102,8 +94,8 @@ public class S3Directory extends FSDirectory {
     public long fileLength(final String name) throws IOException {
         logger.debug("fileLength {}", name);
         ensureOpen();
-        if (Files.exists(localCache.getDirectory().resolve(name))) {
-            return localCache.fileLength(name);
+        if (bufferedFileMap.get(name) != null) {
+            return fsCache.fileLength(name);
         } else {
             // A file can be located either buffer or storage
             return storage.fileLength(name);
@@ -114,10 +106,12 @@ public class S3Directory extends FSDirectory {
     public IndexOutput createOutput(final String name, final IOContext context) throws IOException {
         logger.debug("createOutput {}", name);
 
-        // Output always goes to local files first before sync to S3
-
+        // Output always goes to FS cache first before sync to S3
         ensureOpen();
-        return localCache.createOutput(name, context);
+        IndexOutput indexOutput = fsCache.createOutput(name, context);
+        bufferedFileMap.put(indexOutput.getName(), true);
+
+        return indexOutput;
     }
 
     @Override
@@ -126,20 +120,21 @@ public class S3Directory extends FSDirectory {
 
         // Temp output does not need to sync to S3
         ensureOpen();
-        return localCache.createTempOutput(prefix, suffix, context);
+        IndexOutput indexOutput = fsCache.createTempOutput(prefix, suffix, context);
+        bufferedFileMap.put(indexOutput.getName(), true);
+
+        return indexOutput;
     }
 
     @Override
-    public void sync(final Collection<String> names) throws IOException {
+    public void sync(final Collection<String> names) {
         logger.debug("sync {}", names);
         ensureOpen();
         // Sync all the requested buffered files that have not been written to storage yet
         ArrayList<Path> filePaths = new ArrayList<>();
         for (String name : names) {
-            Path filePath = localCache.getDirectory().resolve(name);
-            if (Files.exists(filePath)) {
-                currentLocalCacheSize += localCache.fileLength(name);
-                filePaths.add(filePath);
+            if (bufferedFileMap.get(name) != null) {
+                filePaths.add(fsCache.buildFullPath(name));
             }
         }
         storage.writeFromFiles(filePaths);
@@ -156,8 +151,8 @@ public class S3Directory extends FSDirectory {
     public void rename(final String from, final String to) throws IOException {
         logger.debug("rename {} -> {}", from, to);
         ensureOpen();
-        if (Files.exists(localCache.getDirectory().resolve(from))) {
-            localCache.rename(from, to);
+        if (fsCache.exists(from)) {
+            fsCache.rename(from, to);
         }
         storage.rename(from, to);
     }
@@ -168,7 +163,7 @@ public class S3Directory extends FSDirectory {
 
         isOpen = false;
         storage.close();
-        localCache.close();
+        fsCache.close();
     }
 
     @Override
@@ -176,29 +171,17 @@ public class S3Directory extends FSDirectory {
         logger.debug("openInput {}", name);
 
         ensureOpen();
-        Path filePath = localCache.getDirectory().resolve(name);
-        if (Files.notExists(filePath)) {
-            long fileLength = fileLength(name);
-            long sizeAfter = currentLocalCacheSize + fileLength;
-            if (sizeAfter >= maxLocalCacheSize) {
-                // List access times of all the cached files
-                List<String> cachedFileNameList = getCachedFilesSizeSortedList();
-                // Reclaim cache space based on last access time
-                for (String fileName : cachedFileNameList) {
-                    currentLocalCacheSize -= localCache.fileLength(fileName);
-                    localCache.deleteFile(fileName);
-                    sizeAfter = currentLocalCacheSize + fileLength;
-                    if (sizeAfter < maxLocalCacheSize) {
-                        break;
-                    }
-                }
-            }
-            // Read file into local cache from storage
-            storage.readToFile(name, filePath.toFile());
-            currentLocalCacheSize += fileLength;
-        }
+        if (bufferedFileMap.get(name) != null) {
+            // The requested file is fully populated in the FS cache
+            return fsCache.openInput(name, context);
+        } else {
+            // The requested file is in S3
+            Map<Long, Boolean> cachedBlockMap =
+                    cachedFileMap.computeIfAbsent(name, k -> new HashMap<>());
 
-        return localCache.openInput(name, context);
+            return new S3IndexInput(name, storage,
+                    fsCache, cachedBlockMap, context);
+        }
     }
 
     /**
@@ -209,11 +192,11 @@ public class S3Directory extends FSDirectory {
      *
      */
     private List<String> getCachedFilesLruList() throws IOException {
-        List<String> fileNames = Arrays.asList(localCache.listAll());
+        List<String> fileNames = Arrays.asList(fsCache.listAll());
         fileNames.sort((o1, o2) -> {
             try {
-                Path path1 = localCache.getDirectory().resolve(o1);
-                Path path2 = localCache.getDirectory().resolve(o2);
+                Path path1 = fsCache.buildFullPath(o1);
+                Path path2 = fsCache.buildFullPath(o2);
                 BasicFileAttributes attr1 = Files.readAttributes(path1, BasicFileAttributes.class);
                 BasicFileAttributes attr2 = Files.readAttributes(path2, BasicFileAttributes.class);
                 return attr1.lastAccessTime().compareTo(attr2.lastAccessTime());
@@ -232,10 +215,10 @@ public class S3Directory extends FSDirectory {
      * @throws IOException if there is an I/O error during file metadata read
      */
     private List<String> getCachedFilesSizeSortedList() throws IOException {
-        List<String> fileNames = Arrays.asList(localCache.listAll());
+        List<String> fileNames = Arrays.asList(fsCache.listAll());
         fileNames.sort((o1, o2) -> {
             try {
-                return Long.compare(localCache.fileLength(o1), localCache.fileLength(o2));
+                return Long.compare(fsCache.fileLength(o1), fsCache.fileLength(o2));
             } catch (IOException e) {
                 throw new RuntimeException(e);
             }
@@ -247,37 +230,11 @@ public class S3Directory extends FSDirectory {
     /**
      * Pre-populates local cache directory to avoid storage reads in performance-critical paths.
      *
-     * @param localCachePath the directory path of the local FS cache
+     * @param fsCache the FS cache object
      */
-    private void prePopulateCache(final String localCachePath) {
-        storage.readAllToDir(localCachePath, this);
-    }
-
-    /**
-     * Gets the current size of the local FS cache.
-     *
-     * @return the currentLocalCacheSize
-     */
-    public Long getCurrentLocalCacheSize() {
-        return currentLocalCacheSize;
-    }
-
-    /**
-     * Sets the current size of the local FS cache.
-     *
-     * @param size the size to be set as the current cache size
-     */
-    public void setCurrentLocalCacheSize(Long size) {
-        currentLocalCacheSize = size;
-    }
-
-    /**
-     * Gets the configured maximum size of the local FS cache.
-     *
-     * @return the maxLocalCacheSize
-     */
-    public Long getMaxLocalCacheSize() {
-        return maxLocalCacheSize;
+    private void prePopulateCache(FSCache fsCache) throws IOException {
+        // Populate all the first and last blocks to cache from storage
+        storage.readAllInitialBlocksToCache(fsCache, cachedFileMap);
     }
 
     @Override
