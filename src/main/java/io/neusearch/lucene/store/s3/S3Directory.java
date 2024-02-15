@@ -15,6 +15,8 @@ import org.apache.lucene.store.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import static org.apache.lucene.index.IndexFileNames.PENDING_SEGMENTS;
+
 /**
  * A S3 based implementation of a Lucene <code>Directory</code> allowing the storage of a Lucene index within S3.
  * The directory works against a single object prefix, where the binary data is stored in <code>objects</code>.
@@ -29,9 +31,9 @@ public class S3Directory extends FSDirectory {
 
     private final FSCache fsCache;
 
-    private static final Map<String,Boolean> bufferedFileMap = new HashMap<>();
-
-    private static final ConcurrentHashMap<String,Map<Long,Boolean>> cachedFileMap = new ConcurrentHashMap<>();
+    private final Map<String,Boolean> bufferedFileMap;
+    private final Map<String,Boolean> syncedFileMap;
+    private final Map<String,Map<Long,Boolean>> cachedFileMap;
 
     private static final StorageFactory storageFactory = new StorageFactory();
 
@@ -48,6 +50,9 @@ public class S3Directory extends FSDirectory {
 
         this.storage = storageFactory.createStorage(storageType, s3Config);
         this.fsCache = new FSCache(Paths.get(fsCachePath));
+        this.bufferedFileMap = new ConcurrentHashMap<>();
+        this.syncedFileMap = new HashMap<>();
+        this.cachedFileMap = new ConcurrentHashMap<>();
         prePopulateCache(fsCache);
 
         logger.debug("S3Directory ({} {})", s3Config, fsCachePath);
@@ -63,18 +68,34 @@ public class S3Directory extends FSDirectory {
             String[] storagePaths = storage.listAll();
             names.addAll(Arrays.stream(storagePaths).toList());
 
-            // Add buffer paths to list
+            // Add buffered file names to list
             if (!bufferedFileMap.isEmpty()) {
                 for (Map.Entry<String,Boolean> entry : bufferedFileMap.entrySet()) {
                     String name = entry.getKey();
                     names.add(name);
                 }
-
-                // Remove potential duplicates between storage and buffer
-                names = new ArrayList<>(new HashSet<>(names));
-                // The output must be in sorted (UTF-16, java's {@link String#compareTo}) order.
-                names.sort(String::compareTo);
             }
+
+            // Add synced file names to list
+            if (!syncedFileMap.isEmpty()) {
+                for (Map.Entry<String,Boolean> entry : bufferedFileMap.entrySet()) {
+                    String name = entry.getKey();
+                    names.add(name);
+                }
+            }
+
+            // Add cached file names to list
+            if (!cachedFileMap.isEmpty()) {
+                for (Map.Entry<String,Map<Long,Boolean>> entry : cachedFileMap.entrySet()) {
+                    String name = entry.getKey();
+                    names.add(name);
+                }
+            }
+
+            // Remove potential duplicates between storage and buffer
+            names = new ArrayList<>(new HashSet<>(names));
+            // The output must be in sorted (UTF-16, java's {@link String#compareTo}) order.
+            names.sort(String::compareTo);
         } catch (Exception e) {
             logger.error("{}", e.toString());
         }
@@ -86,15 +107,31 @@ public class S3Directory extends FSDirectory {
     public void deleteFile(final String name) throws IOException {
         logger.debug("deleteFile {}", name);
 
-        fsCache.deleteFile(name);
-        storage.deleteFile(name);
+        if (bufferedFileMap.get(name) != null) {
+            fsCache.deleteFile(name);
+            bufferedFileMap.remove(name);
+        } else if (syncedFileMap.get(name) != null) {
+            fsCache.deleteFile(name);
+            syncedFileMap.remove(name);
+            storage.deleteFile(name);
+        } else if (cachedFileMap.get(name) != null) {
+            fsCache.deleteFile(name);
+            Map<Long,Boolean> cachedBlockMap = cachedFileMap.get(name);
+            if (cachedBlockMap != null) {
+                cachedBlockMap.clear();
+            }
+            cachedFileMap.remove(name);
+            storage.deleteFile(name);
+        } else {
+            storage.deleteFile(name);
+        }
     }
 
     @Override
     public long fileLength(final String name) throws IOException {
         logger.debug("fileLength {}", name);
         ensureOpen();
-        if (bufferedFileMap.get(name) != null) {
+        if (isCached(name)) {
             return fsCache.fileLength(name);
         } else {
             // A file can be located either buffer or storage
@@ -127,34 +164,71 @@ public class S3Directory extends FSDirectory {
     }
 
     @Override
-    public void sync(final Collection<String> names) {
+    public void sync(final Collection<String> names) throws IOException {
         logger.debug("sync {}", names);
         ensureOpen();
         // Sync all the requested buffered files that have not been written to storage yet
-        ArrayList<Path> filePaths = new ArrayList<>();
+        List<Path> filePaths = new ArrayList<>();
         for (String name : names) {
-            if (bufferedFileMap.get(name) != null) {
+            if (bufferedFileMap.get(name) != null && !isTempFile(name)
+                    && fsCache.fileLength(name) > 0) {
+                // Do not sync temporary files
                 filePaths.add(fsCache.buildFullPath(name));
+                syncedFileMap.put(name, true);
+                bufferedFileMap.remove(name);
             }
         }
-        storage.writeFromFiles(filePaths);
+
+        if (!filePaths.isEmpty()) {
+            storage.writeFromFiles(filePaths);
+        }
     }
 
     @Override
-    public void syncMetaData() {
+    public void syncMetaData() throws IOException {
         logger.debug("syncMetaData\n");
         ensureOpen();
-        // Do nothing
+
+        // Sync all the buffered files to storage
+        List<Path> filePaths = new ArrayList<>();
+        for (Map.Entry<String,Boolean> entry : bufferedFileMap.entrySet()) {
+            String name = entry.getKey();
+            if (!isTempFile(name) && fsCache.fileLength(name) > 0) {
+                filePaths.add(fsCache.buildFullPath(name));
+                syncedFileMap.put(name, true);
+                bufferedFileMap.remove(name);
+            }
+        }
+
+        if (!filePaths.isEmpty()) {
+            storage.writeFromFiles(filePaths);
+        }
     }
 
     @Override
     public void rename(final String from, final String to) throws IOException {
         logger.debug("rename {} -> {}", from, to);
         ensureOpen();
-        if (fsCache.exists(from)) {
+
+        if (bufferedFileMap.get(from) != null) {
             fsCache.rename(from, to);
+            bufferedFileMap.remove(from);
+            bufferedFileMap.put(to, true);
+        } else if (syncedFileMap.get(from) != null) {
+            fsCache.rename(from, to);
+            storage.rename(from, to);
+            syncedFileMap.remove(from);
+            syncedFileMap.put(to, true);
+        } else if (cachedFileMap.get(from) != null) {
+            fsCache.rename(from, to);
+            storage.rename(from, to);
+            Map<Long,Boolean> cachedBlockMap = cachedFileMap.get(from);
+            cachedFileMap.remove(from);
+            cachedFileMap.put(to, cachedBlockMap);
+        } else {
+            // The requested file is not in memory
+            storage.rename(from, to);
         }
-        storage.rename(from, to);
     }
 
     @Override
@@ -162,6 +236,13 @@ public class S3Directory extends FSDirectory {
         logger.debug("close\n");
 
         isOpen = false;
+        bufferedFileMap.clear();
+        syncedFileMap.clear();
+        for (Map.Entry<String,Map<Long,Boolean>> entry : cachedFileMap.entrySet()) {
+            entry.getValue().clear();
+        }
+        cachedFileMap.clear();
+
         storage.close();
         fsCache.close();
     }
@@ -171,17 +252,21 @@ public class S3Directory extends FSDirectory {
         logger.debug("openInput {}", name);
 
         ensureOpen();
-        if (bufferedFileMap.get(name) != null) {
+        if (bufferedFileMap.get(name) != null
+                || syncedFileMap.get(name) != null) {
             // The requested file is fully populated in the FS cache
             return fsCache.openInput(name, context);
         } else {
-            // The requested file is in S3
             Map<Long, Boolean> cachedBlockMap =
                     cachedFileMap.computeIfAbsent(name, k -> new HashMap<>());
-
             return new S3IndexInput(name, storage,
                     fsCache, cachedBlockMap, context);
         }
+    }
+
+    @Override
+    public Set<String> getPendingDeletions() {
+        return Collections.emptySet();
     }
 
     /**
@@ -237,8 +322,13 @@ public class S3Directory extends FSDirectory {
         storage.readAllInitialBlocksToCache(fsCache, cachedFileMap);
     }
 
-    @Override
-    public Set<String> getPendingDeletions() {
-        return Collections.emptySet();
+    private boolean isTempFile(String name) {
+        return name.endsWith("tmp") || name.startsWith(PENDING_SEGMENTS);
+    }
+
+    private boolean isCached(String name) {
+        return bufferedFileMap.get(name) != null
+                || syncedFileMap.get(name) != null
+                || cachedFileMap.get(name) != null;
     }
 }
