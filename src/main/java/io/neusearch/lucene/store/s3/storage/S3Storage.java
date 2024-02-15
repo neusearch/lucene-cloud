@@ -8,6 +8,7 @@ import software.amazon.awssdk.core.ResponseBytes;
 import software.amazon.awssdk.core.async.AsyncResponseTransformer;
 import software.amazon.awssdk.services.s3.S3AsyncClient;
 import software.amazon.awssdk.services.s3.model.*;
+import software.amazon.awssdk.services.s3.paginators.ListObjectVersionsPublisher;
 import software.amazon.awssdk.services.s3.paginators.ListObjectsV2Publisher;
 import software.amazon.awssdk.transfer.s3.S3TransferManager;
 import software.amazon.awssdk.transfer.s3.model.*;
@@ -60,8 +61,8 @@ public class S3Storage implements Storage {
      */
     public String[] listAll() {
         logger.debug("listAll()");
-        ArrayList<String> names = new ArrayList<>();
-        ArrayList<S3Object> s3ObjectList = listAllObjects();
+        List<String> names = new ArrayList<>();
+        List<S3Object> s3ObjectList = listAllObjects();
         for (S3Object object : s3ObjectList) {
             if (object.key().equals(prefix)) {
                 continue;
@@ -84,7 +85,7 @@ public class S3Storage implements Storage {
      *
      * @return the object metadata array
      */
-    public ArrayList<S3Object> listAllObjects() {
+    public List<S3Object> listAllObjects() {
         ListObjectsV2Publisher responses = s3Client.listObjectsV2Paginator(r -> r.bucket(bucket).prefix(prefix).build());
         ArrayList<S3Object> s3ObjectList = new ArrayList<>();
         responses.contents().subscribe(s3ObjectList::add).join();
@@ -150,9 +151,21 @@ public class S3Storage implements Storage {
                     final int len, final File file) {
         logger.debug("readToFile {} -> {}", file.getPath(), buildS3PathFromName(name));
 
-        s3Client.getObject(req -> req.bucket(bucket).key(prefix + name)
-                        .range(String.format("bytes=%d-%d", fileOffset, fileOffset + len - 1)),
-                AsyncResponseTransformer.toFile(file.toPath())).join();
+        try {
+            s3Client.getObject(req -> req.bucket(bucket).key(prefix + name)
+                            .range(String.format("bytes=%d-%d", fileOffset, fileOffset + len - 1)),
+                    AsyncResponseTransformer.toFile(file.toPath())).join();
+        } catch (Exception e) {
+            if (e.getCause() instanceof NoSuchKeyException) {
+                // The object may be deleted concurrently, try again with the version ID
+                s3Client.getObject(req -> req.bucket(bucket).key(prefix + name)
+                                .versionId(getVersionId(name))
+                                .range(String.format("bytes=%d-%d", fileOffset, fileOffset + len - 1)),
+                        AsyncResponseTransformer.toFile(file.toPath())).join();
+            } else {
+                throw e;
+            }
+        }
     }
 
     /**
@@ -164,8 +177,19 @@ public class S3Storage implements Storage {
     public void readToFile(final String name, final File file) {
         logger.debug("readToFile {} -> {}", buildS3PathFromName(name), file.getPath());
 
-        s3Client.getObject(req -> req.bucket(bucket).key(prefix + name),
-                AsyncResponseTransformer.toFile(file.toPath())).join();
+        try {
+            s3Client.getObject(req -> req.bucket(bucket).key(prefix + name),
+                    AsyncResponseTransformer.toFile(file.toPath())).join();
+        } catch (Exception e) {
+            if (e.getCause() instanceof NoSuchKeyException) {
+                // The object may be deleted concurrently, try again with the version ID
+                s3Client.getObject(req -> req.bucket(bucket).key(prefix + name)
+                                .versionId(getVersionId(name)),
+                        AsyncResponseTransformer.toFile(file.toPath())).join();
+            } else {
+                throw e;
+            }
+        }
     }
 
     /**
@@ -174,8 +198,8 @@ public class S3Storage implements Storage {
      * @param dir the directory to write all the objects
      */
     public void readAllToDir(final String dir) {
-        ArrayList<S3Object> objectList = listAllObjects();
-        ArrayList<FileDownload> fileDownloads = new ArrayList<>();
+        List<S3Object> objectList = listAllObjects();
+        List<FileDownload> fileDownloads = new ArrayList<>();
         for (S3Object object : objectList) {
             if (object.key().equals(prefix)) {
                 // Skip prefix object
@@ -200,7 +224,7 @@ public class S3Storage implements Storage {
 
     public void readAllInitialBlocksToCache(FSCache fsCache,
                                             Map<String, Map<Long,Boolean>> cachedFileMap) throws IOException {
-        ArrayList<S3Object> objectList = listAllObjects();
+        List<S3Object> objectList = listAllObjects();
 
         List<IODescriptor> ioDescs = new ArrayList<>();
 
@@ -216,8 +240,8 @@ public class S3Storage implements Storage {
             String name = object.key().substring(prefix.length());
             ioDescs.add(new IODescriptor(name, 0, firstLen,
                     s3Client.getObject(req -> req.bucket(bucket).key(object.key())
-                            .range(String.format("bytes=%d-%d", 0, firstLen - 1)),
-                    AsyncResponseTransformer.toBytes())));
+                                    .range(String.format("bytes=%d-%d", 0, firstLen - 1)),
+                            AsyncResponseTransformer.toBytes())));
 
             if (object.size() > BLOCK_SIZE) {
                 // This object is larger than the BLOCK_SIZE
@@ -235,11 +259,25 @@ public class S3Storage implements Storage {
         // Write all the blocks to the corresponding positions of the files
         RandomAccessFile file;
         Map<Long, Boolean> cachedBlockMap;
+        ResponseBytes<GetObjectResponse> respBytes;
         for (IODescriptor ioDesc : ioDescs) {
             file = new RandomAccessFile(fsCache.getDirectory()
                     .resolve(ioDesc.name).toFile(), "rw");
 
-            ResponseBytes<GetObjectResponse> respBytes = ioDesc.resp.join();
+            try {
+                 respBytes = ioDesc.resp.join();
+            } catch (Exception e) {
+                if (e.getCause() instanceof NoSuchKeyException) {
+                    // The object may be deleted concurrently, try again with the version ID
+                    respBytes = s3Client.getObject(req -> req.bucket(bucket).key(prefix + ioDesc.name)
+                                    .versionId(getVersionId(ioDesc.name))
+                                    .range(String.format("bytes=%d-%d", ioDesc.offset,
+                                            ioDesc.offset + ioDesc.length - 1)),
+                            AsyncResponseTransformer.toBytes()).join();
+                } else {
+                    throw e;
+                }
+            }
 
             file.seek(ioDesc.offset);
             file.write(respBytes.asByteArray());
@@ -251,7 +289,6 @@ public class S3Storage implements Storage {
 
             long blockIdx = ioDesc.offset / BLOCK_SIZE;
             cachedBlockMap.put(blockIdx, true);
-            //logger.info("name {} offset {} length {} blockIdx {}", ioDesc.name, ioDesc.offset, ioDesc.length, blockIdx);
         }
     }
 
@@ -269,9 +306,22 @@ public class S3Storage implements Storage {
     public int readBytes(final String name, final byte[] buffer, final int bufOffset, final int fileOffset, final int len) throws IOException {
         logger.debug("readBytes {} bufOffset {} fileOffset {} length {}", name, bufOffset, fileOffset, len);
 
-        ResponseBytes<GetObjectResponse> b = s3Client.getObject(req -> req.bucket(bucket).key(prefix + name)
-                        .range(String.format("bytes=%d-%d", fileOffset, fileOffset + len - 1)),
-                AsyncResponseTransformer.toBytes()).join();
+        ResponseBytes<GetObjectResponse> b;
+        try {
+            b = s3Client.getObject(req -> req.bucket(bucket).key(prefix + name)
+                            .range(String.format("bytes=%d-%d", fileOffset, fileOffset + len - 1)),
+                    AsyncResponseTransformer.toBytes()).join();
+        } catch (Exception e) {
+            if (e.getCause() instanceof NoSuchKeyException) {
+                b = s3Client.getObject(req -> req.bucket(bucket).key(prefix + name)
+                                .versionId(getVersionId(name))
+                                .range(String.format("bytes=%d-%d", fileOffset, fileOffset + len - 1)),
+                        AsyncResponseTransformer.toBytes()).join();
+            } else {
+                throw e;
+            }
+        }
+
         int actualLen;
         try (InputStream is = b.asInputStream()) {
             actualLen = is.read(buffer, bufOffset, len);
@@ -282,9 +332,21 @@ public class S3Storage implements Storage {
     public byte[] readBytes(final String name, final int offset, final int len) {
         logger.debug("readBytes {} offset {} length {}", name, offset, len);
 
-        ResponseBytes<GetObjectResponse> b = s3Client.getObject(req -> req.bucket(bucket).key(prefix + name)
-                        .range(String.format("bytes=%d-%d", offset, offset + len - 1)),
-                AsyncResponseTransformer.toBytes()).join();
+        ResponseBytes<GetObjectResponse> b;
+        try {
+            b = s3Client.getObject(req -> req.bucket(bucket).key(prefix + name)
+                            .range(String.format("bytes=%d-%d", offset, offset + len - 1)),
+                    AsyncResponseTransformer.toBytes()).join();
+        } catch (Exception e) {
+            if (e.getCause() instanceof NoSuchKeyException) {
+                b = s3Client.getObject(req -> req.bucket(bucket).key(prefix + name)
+                                .versionId(getVersionId(name))
+                                .range(String.format("bytes=%d-%d", offset, offset + len - 1)),
+                        AsyncResponseTransformer.toBytes()).join();
+            } else {
+                throw e;
+            }
+        }
 
         return b.asByteArray();
     }
@@ -368,5 +430,13 @@ public class S3Storage implements Storage {
 
     private record IODescriptor(String name, long offset, long length,
                                 CompletableFuture<ResponseBytes<GetObjectResponse>> resp) {
+    }
+
+    private String getVersionId(String name) {
+        ListObjectVersionsPublisher responses =
+                s3Client.listObjectVersionsPaginator(r -> r.bucket(bucket).prefix(prefix + name).build());
+        ArrayList<ObjectVersion> objectList = new ArrayList<>();
+        responses.versions().subscribe(objectList::add).join();
+        return objectList.getFirst().versionId();
     }
 }
