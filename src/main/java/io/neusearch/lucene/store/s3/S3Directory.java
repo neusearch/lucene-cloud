@@ -38,6 +38,29 @@ public class S3Directory extends FSDirectory {
     private static final StorageFactory storageFactory = new StorageFactory();
 
     /**
+     * Creates a new S3 directory with the provided block size.
+     *
+     * @param s3Config the S3 configurations
+     * @param fsCachePath the FS path to be used as a buffer/cache for a backend storage
+     * @param blockSize the block size of the FS cache
+     * @throws IOException if initializing cache directory failed for reasons
+     */
+    public S3Directory(final S3Storage.Config s3Config,
+                       final String fsCachePath, final long blockSize) throws IOException {
+        super(Paths.get("/tmp"), FSLockFactory.getDefault());
+
+        S3IndexInput.BLOCK_SIZE = blockSize;
+        this.storage = storageFactory.createStorage(storageType, s3Config);
+        this.fsCache = new FSCache(Paths.get(fsCachePath));
+        this.bufferedFileMap = new ConcurrentHashMap<>();
+        this.syncedFileMap = new HashMap<>();
+        this.cachedFileMap = new ConcurrentHashMap<>();
+        prePopulateCache(fsCache);
+
+        logger.debug("S3Directory ({} {})", s3Config, fsCachePath);
+    }
+
+    /**
      * Creates a new S3 directory.
      *
      * @param s3Config the S3 configurations
@@ -48,6 +71,7 @@ public class S3Directory extends FSDirectory {
                        final String fsCachePath) throws IOException {
         super(Paths.get("/tmp"), FSLockFactory.getDefault());
 
+        S3IndexInput.BLOCK_SIZE = S3IndexInput.DEFAULT_BLOCK_SIZE;
         this.storage = storageFactory.createStorage(storageType, s3Config);
         this.fsCache = new FSCache(Paths.get(fsCachePath));
         this.bufferedFileMap = new ConcurrentHashMap<>();
