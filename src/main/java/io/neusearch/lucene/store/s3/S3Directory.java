@@ -22,8 +22,9 @@ import static org.apache.lucene.index.IndexFileNames.PENDING_SEGMENTS;
  * The directory works against a single object prefix, where the binary data is stored in <code>objects</code>.
  * Each "object" has an entry in the S3.
  */
-public class S3Directory extends FSDirectory {
+public class S3Directory extends Directory {
     private static final Logger logger = LoggerFactory.getLogger(S3Directory.class);
+    protected volatile boolean isOpen = true;
 
     private static final String storageType = "s3";
 
@@ -33,6 +34,7 @@ public class S3Directory extends FSDirectory {
 
     private final Map<String,Boolean> bufferedFileMap;
     private final Map<String,Boolean> syncedFileMap;
+    private final Map<String,Boolean> renamedFileMap;
     private final Map<String,Map<Long,Boolean>> cachedFileMap;
 
     private static final StorageFactory storageFactory = new StorageFactory();
@@ -47,13 +49,14 @@ public class S3Directory extends FSDirectory {
      */
     public S3Directory(final S3Storage.Config s3Config,
                        final String fsCachePath, final long blockSize) throws IOException {
-        super(Paths.get("/tmp"), FSLockFactory.getDefault());
+        super();
 
         S3IndexInput.BLOCK_SIZE = blockSize;
         this.storage = storageFactory.createStorage(storageType, s3Config);
         this.fsCache = new FSCache(Paths.get(fsCachePath));
         this.bufferedFileMap = new ConcurrentHashMap<>();
         this.syncedFileMap = new HashMap<>();
+        this.renamedFileMap = new HashMap<>();
         this.cachedFileMap = new ConcurrentHashMap<>();
         prePopulateCache(fsCache);
 
@@ -69,13 +72,14 @@ public class S3Directory extends FSDirectory {
      */
     public S3Directory(final S3Storage.Config s3Config,
                        final String fsCachePath) throws IOException {
-        super(Paths.get("/tmp"), FSLockFactory.getDefault());
+        super();
 
         S3IndexInput.BLOCK_SIZE = S3IndexInput.DEFAULT_BLOCK_SIZE;
         this.storage = storageFactory.createStorage(storageType, s3Config);
         this.fsCache = new FSCache(Paths.get(fsCachePath));
         this.bufferedFileMap = new ConcurrentHashMap<>();
         this.syncedFileMap = new HashMap<>();
+        this.renamedFileMap = new HashMap<>();
         this.cachedFileMap = new ConcurrentHashMap<>();
         prePopulateCache(fsCache);
 
@@ -95,22 +99,6 @@ public class S3Directory extends FSDirectory {
             // Add buffered file names to list
             if (!bufferedFileMap.isEmpty()) {
                 for (Map.Entry<String,Boolean> entry : bufferedFileMap.entrySet()) {
-                    String name = entry.getKey();
-                    names.add(name);
-                }
-            }
-
-            // Add synced file names to list
-            if (!syncedFileMap.isEmpty()) {
-                for (Map.Entry<String,Boolean> entry : bufferedFileMap.entrySet()) {
-                    String name = entry.getKey();
-                    names.add(name);
-                }
-            }
-
-            // Add cached file names to list
-            if (!cachedFileMap.isEmpty()) {
-                for (Map.Entry<String,Map<Long,Boolean>> entry : cachedFileMap.entrySet()) {
                     String name = entry.getKey();
                     names.add(name);
                 }
@@ -188,14 +176,13 @@ public class S3Directory extends FSDirectory {
     }
 
     @Override
-    public void sync(final Collection<String> names) throws IOException {
+    public void sync(final Collection<String> names) {
         logger.debug("sync {}", names);
         ensureOpen();
         // Sync all the requested buffered files that have not been written to storage yet
         List<Path> filePaths = new ArrayList<>();
         for (String name : names) {
-            if (bufferedFileMap.get(name) != null && !isTempFile(name)
-                    && fsCache.fileLength(name) > 0) {
+            if (bufferedFileMap.get(name) != null && !isTempFile(name)) {
                 // Do not sync temporary files
                 filePaths.add(fsCache.buildFullPath(name));
                 syncedFileMap.put(name, true);
@@ -209,24 +196,24 @@ public class S3Directory extends FSDirectory {
     }
 
     @Override
-    public void syncMetaData() throws IOException {
+    public void syncMetaData() {
         logger.debug("syncMetaData\n");
         ensureOpen();
 
         // Sync all the buffered files to storage
         List<Path> filePaths = new ArrayList<>();
-        for (Map.Entry<String,Boolean> entry : bufferedFileMap.entrySet()) {
+        for (Map.Entry<String,Boolean> entry : renamedFileMap.entrySet()) {
             String name = entry.getKey();
-            if (!isTempFile(name) && fsCache.fileLength(name) > 0) {
-                filePaths.add(fsCache.buildFullPath(name));
-                syncedFileMap.put(name, true);
-                bufferedFileMap.remove(name);
-            }
+            filePaths.add(fsCache.buildFullPath(name));
+            syncedFileMap.put(name, true);
+            bufferedFileMap.remove(name);
         }
 
         if (!filePaths.isEmpty()) {
             storage.writeFromFiles(filePaths);
         }
+
+        renamedFileMap.clear();
     }
 
     @Override
@@ -253,6 +240,8 @@ public class S3Directory extends FSDirectory {
             // The requested file is not in memory
             storage.rename(from, to);
         }
+
+        renamedFileMap.put(to, true);
     }
 
     @Override
@@ -291,6 +280,18 @@ public class S3Directory extends FSDirectory {
     @Override
     public Set<String> getPendingDeletions() {
         return Collections.emptySet();
+    }
+
+    @Override
+    public final Lock obtainLock(String name) throws IOException {
+        return fsCache.obtainLock(name);
+    }
+
+    @Override
+    protected final void ensureOpen() throws AlreadyClosedException {
+        if (!isOpen) {
+            throw new AlreadyClosedException("this Directory is closed");
+        }
     }
 
     /**

@@ -24,6 +24,8 @@ public class S3IndexWriter extends IndexWriter {
                         return new KnnVectorsFormatMaxDimExt(new Lucene99HnswVectorsFormat());
                     }
                 });
+        conf.getMergePolicy().setNoCFSRatio(0.0);
+
         return new S3IndexWriter(d, conf);
     }
 }

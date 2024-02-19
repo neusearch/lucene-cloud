@@ -63,10 +63,11 @@ public class S3IndexInput extends IndexInput {
 
     @Override
     public byte readByte() throws IOException {
-        //logger.debug("S3IndexInput.readByte ({} {} pos {} totalLength {})", name, sliceDesc, position, totalLength);
+//        logger.debug("S3IndexInput.readByte ({} {} pos {} totalLength {})",
+//                name, indexInput.toString(), indexInput.getFilePointer(), indexInput.length());
 
         // Calculate a block index for serving this one-byte-read request
-        long blockIdx = indexInput.getFilePointer() / BLOCK_SIZE;
+        long blockIdx = (sliceOffset + indexInput.getFilePointer()) / BLOCK_SIZE;
 
         // Check whether the block was cached
         if (cachedBlockMap.get(blockIdx) == null) {
@@ -83,7 +84,8 @@ public class S3IndexInput extends IndexInput {
 
     @Override
     public void readBytes(final byte[] buffer, int offset, int len) throws IOException {
-        //logger.debug("S3IndexInput.readBytes ({} {} pos {} len {} totalLength {})", name, sliceDesc, position, len, totalLength);
+//        logger.debug("S3IndexInput.readBytes ({} offset {} len {} pos {} totalLength {})",
+//                name, offset, len, indexInput.getFilePointer(), indexInput.length());
 
         if (len <= 0) {
             return;
@@ -142,9 +144,9 @@ public class S3IndexInput extends IndexInput {
     public IndexInput slice(final String sliceDescription, final long offset, final long length) throws IOException {
         logger.debug("S3IndexInput.slice({} {} offset {} length {})", name, sliceDescription, offset, length);
 
-        long baseOffset = offset + this.sliceOffset;
+        long sliceOffset = offset + this.sliceOffset;
         return new S3IndexInput(name, sliceDescription,
-                storage, file, cachedBlockMap, baseOffset, baseLength,
+                storage, file, cachedBlockMap, sliceOffset, baseLength,
                 indexInput.slice(sliceDescription, offset, length));
     }
 
