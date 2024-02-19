@@ -33,6 +33,7 @@ public class S3Directory extends FSDirectory {
 
     private final Map<String,Boolean> bufferedFileMap;
     private final Map<String,Boolean> syncedFileMap;
+    private final Map<String,Boolean> renamedFileMap;
     private final Map<String,Map<Long,Boolean>> cachedFileMap;
 
     private static final StorageFactory storageFactory = new StorageFactory();
@@ -54,6 +55,7 @@ public class S3Directory extends FSDirectory {
         this.fsCache = new FSCache(Paths.get(fsCachePath));
         this.bufferedFileMap = new ConcurrentHashMap<>();
         this.syncedFileMap = new HashMap<>();
+        this.renamedFileMap = new HashMap<>();
         this.cachedFileMap = new ConcurrentHashMap<>();
         prePopulateCache(fsCache);
 
@@ -76,6 +78,7 @@ public class S3Directory extends FSDirectory {
         this.fsCache = new FSCache(Paths.get(fsCachePath));
         this.bufferedFileMap = new ConcurrentHashMap<>();
         this.syncedFileMap = new HashMap<>();
+        this.renamedFileMap = new HashMap<>();
         this.cachedFileMap = new ConcurrentHashMap<>();
         prePopulateCache(fsCache);
 
@@ -95,22 +98,6 @@ public class S3Directory extends FSDirectory {
             // Add buffered file names to list
             if (!bufferedFileMap.isEmpty()) {
                 for (Map.Entry<String,Boolean> entry : bufferedFileMap.entrySet()) {
-                    String name = entry.getKey();
-                    names.add(name);
-                }
-            }
-
-            // Add synced file names to list
-            if (!syncedFileMap.isEmpty()) {
-                for (Map.Entry<String,Boolean> entry : bufferedFileMap.entrySet()) {
-                    String name = entry.getKey();
-                    names.add(name);
-                }
-            }
-
-            // Add cached file names to list
-            if (!cachedFileMap.isEmpty()) {
-                for (Map.Entry<String,Map<Long,Boolean>> entry : cachedFileMap.entrySet()) {
                     String name = entry.getKey();
                     names.add(name);
                 }
@@ -194,8 +181,7 @@ public class S3Directory extends FSDirectory {
         // Sync all the requested buffered files that have not been written to storage yet
         List<Path> filePaths = new ArrayList<>();
         for (String name : names) {
-            if (bufferedFileMap.get(name) != null && !isTempFile(name)
-                    && fsCache.fileLength(name) > 0) {
+            if (bufferedFileMap.get(name) != null && !isTempFile(name)) {
                 // Do not sync temporary files
                 filePaths.add(fsCache.buildFullPath(name));
                 syncedFileMap.put(name, true);
@@ -215,18 +201,18 @@ public class S3Directory extends FSDirectory {
 
         // Sync all the buffered files to storage
         List<Path> filePaths = new ArrayList<>();
-        for (Map.Entry<String,Boolean> entry : bufferedFileMap.entrySet()) {
+        for (Map.Entry<String,Boolean> entry : renamedFileMap.entrySet()) {
             String name = entry.getKey();
-            if (!isTempFile(name) && fsCache.fileLength(name) > 0) {
-                filePaths.add(fsCache.buildFullPath(name));
-                syncedFileMap.put(name, true);
-                bufferedFileMap.remove(name);
-            }
+            filePaths.add(fsCache.buildFullPath(name));
+            syncedFileMap.put(name, true);
+            bufferedFileMap.remove(name);
         }
 
         if (!filePaths.isEmpty()) {
             storage.writeFromFiles(filePaths);
         }
+
+        renamedFileMap.clear();
     }
 
     @Override
@@ -253,6 +239,8 @@ public class S3Directory extends FSDirectory {
             // The requested file is not in memory
             storage.rename(from, to);
         }
+
+        renamedFileMap.put(to, true);
     }
 
     @Override
