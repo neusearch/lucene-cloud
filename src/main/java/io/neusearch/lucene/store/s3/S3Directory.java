@@ -22,8 +22,9 @@ import static org.apache.lucene.index.IndexFileNames.PENDING_SEGMENTS;
  * The directory works against a single object prefix, where the binary data is stored in <code>objects</code>.
  * Each "object" has an entry in the S3.
  */
-public class S3Directory extends FSDirectory {
+public class S3Directory extends Directory {
     private static final Logger logger = LoggerFactory.getLogger(S3Directory.class);
+    protected volatile boolean isOpen = true;
 
     private static final String storageType = "s3";
 
@@ -48,7 +49,7 @@ public class S3Directory extends FSDirectory {
      */
     public S3Directory(final S3Storage.Config s3Config,
                        final String fsCachePath, final long blockSize) throws IOException {
-        super(Paths.get("/tmp"), FSLockFactory.getDefault());
+        super();
 
         S3IndexInput.BLOCK_SIZE = blockSize;
         this.storage = storageFactory.createStorage(storageType, s3Config);
@@ -71,7 +72,7 @@ public class S3Directory extends FSDirectory {
      */
     public S3Directory(final S3Storage.Config s3Config,
                        final String fsCachePath) throws IOException {
-        super(Paths.get("/tmp"), FSLockFactory.getDefault());
+        super();
 
         S3IndexInput.BLOCK_SIZE = S3IndexInput.DEFAULT_BLOCK_SIZE;
         this.storage = storageFactory.createStorage(storageType, s3Config);
@@ -175,7 +176,7 @@ public class S3Directory extends FSDirectory {
     }
 
     @Override
-    public void sync(final Collection<String> names) throws IOException {
+    public void sync(final Collection<String> names) {
         logger.debug("sync {}", names);
         ensureOpen();
         // Sync all the requested buffered files that have not been written to storage yet
@@ -195,7 +196,7 @@ public class S3Directory extends FSDirectory {
     }
 
     @Override
-    public void syncMetaData() throws IOException {
+    public void syncMetaData() {
         logger.debug("syncMetaData\n");
         ensureOpen();
 
@@ -279,6 +280,18 @@ public class S3Directory extends FSDirectory {
     @Override
     public Set<String> getPendingDeletions() {
         return Collections.emptySet();
+    }
+
+    @Override
+    public final Lock obtainLock(String name) throws IOException {
+        return fsCache.obtainLock(name);
+    }
+
+    @Override
+    protected final void ensureOpen() throws AlreadyClosedException {
+        if (!isOpen) {
+            throw new AlreadyClosedException("this Directory is closed");
+        }
     }
 
     /**

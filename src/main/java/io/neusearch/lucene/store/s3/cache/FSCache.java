@@ -1,10 +1,7 @@
 package io.neusearch.lucene.store.s3.cache;
 
 import io.neusearch.lucene.store.s3.index.S3IndexInput;
-import org.apache.lucene.store.FSDirectory;
-import org.apache.lucene.store.IOContext;
-import org.apache.lucene.store.IndexInput;
-import org.apache.lucene.store.IndexOutput;
+import org.apache.lucene.store.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -69,6 +66,10 @@ public class FSCache {
 
     public Path buildFullPath(String name) {
         return directory.resolve(name);
+    }
+
+    public final Lock obtainLock(String name) throws IOException {
+        return cache.obtainLock(name);
     }
 
 }
