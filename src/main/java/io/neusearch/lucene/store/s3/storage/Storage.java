@@ -90,7 +90,15 @@ public interface Storage {
     int readBytes(final String name, final byte[] buffer, final int bufOffset,
                   final int fileOffset, final int len) throws IOException;
 
-    byte[] readBytes(final String name, final int offset, final int len) throws IOException;
+    /**
+     * Reads a specific range of a file and returns the byte array.
+     *
+     * @param name the file name to read
+     * @param offset the start file offset
+     * @param len the total length to read
+     * @return the byte array read
+     */
+    byte[] readBytes(final String name, final int offset, final int len);
 
     /**
      * Reads all the files in storage and writes to the given directory
@@ -99,6 +107,13 @@ public interface Storage {
      */
     void readAllToDir(final String dir);
 
+    /**
+     * Reads the first and last block of all the objects and writes to the corresponding files.
+     *
+     * @param fsCache the file system cache instance
+     * @param cachedFileMap the map for tracking cached files and blocks
+     * @throws IOException if any i/o error occurs during writing to files
+     */
     void readAllInitialBlocksToCache(FSCache fsCache,
                                      Map<String, Map<Long,Boolean>> cachedFileMap) throws IOException;
 

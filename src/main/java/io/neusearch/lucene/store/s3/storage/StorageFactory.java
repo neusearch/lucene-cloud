@@ -27,7 +27,7 @@ public class StorageFactory {
         if (storageType == null || storageType.isEmpty())
             return null;
         return switch (storageType.toLowerCase()) {
-            case "s3" -> new S3Storage((S3Storage.Config) config);
+            case "s3" -> new S3Storage((S3StorageConfig) config);
             default -> throw new IllegalArgumentException("Unknown storage " + storageType);
         };
     }

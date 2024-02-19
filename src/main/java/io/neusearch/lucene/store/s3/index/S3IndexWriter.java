@@ -10,22 +10,40 @@ import org.apache.lucene.store.Directory;
 
 import java.io.IOException;
 
+/**
+ * A IndexWriter implementation for S3.
+ */
 public class S3IndexWriter extends IndexWriter {
 
-    protected S3IndexWriter(Directory d, IndexWriterConfig conf) throws IOException {
-        super(d, conf);
+    /**
+     * Initializes this instance.
+     *
+     * @param dir the directory for writing
+     * @param config the IndexWriter configurations
+     * @throws IOException if any i/o error occurs
+     */
+    protected S3IndexWriter(Directory dir, IndexWriterConfig config) throws IOException {
+        super(dir, config);
     }
 
-    public static S3IndexWriter create(Directory d, IndexWriterConfig conf) throws IOException {
-        conf.setCodec(
+    /**
+     * Creates a new S3IndexWriter instance with some default settings.
+     *
+     * @param dir the directory for writing
+     * @param config the IndexWriter configurations
+     * @return the S3IndexWriter instance
+     * @throws IOException if any i/o error occurs
+     */
+    public static S3IndexWriter create(Directory dir, IndexWriterConfig config) throws IOException {
+        config.setCodec(
                 new Lucene99Codec() {
                     @Override
                     public KnnVectorsFormat getKnnVectorsFormatForField(String field) {
                         return new KnnVectorsFormatMaxDimExt(new Lucene99HnswVectorsFormat());
                     }
                 });
-        conf.getMergePolicy().setNoCFSRatio(0.0);
+        config.getMergePolicy().setNoCFSRatio(0.0);
 
-        return new S3IndexWriter(d, conf);
+        return new S3IndexWriter(dir, config);
     }
 }

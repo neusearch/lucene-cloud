@@ -38,9 +38,9 @@ public class S3Storage implements Storage {
     /**
      * Creates and initializes a new S3 Storage object.
      *
-     * @config config the parameters required to initialize S3 clients, not null
+     * @param config the parameters required to initialize S3 clients, not null
      */
-    public S3Storage(final Config config) {
+    public S3Storage(final S3StorageConfig config) {
         String bucket = config.getBucket();
         String prefix = config.getPrefix();
 
@@ -55,7 +55,7 @@ public class S3Storage implements Storage {
     }
 
     /**
-     * Lists all the object names excluding the prefix part in the configured S3 bucket prefix
+     * Lists all the object names excluding the prefix part in the configured S3 bucket prefix.
      *
      * @return the object names array
      */
@@ -81,7 +81,7 @@ public class S3Storage implements Storage {
     }
 
     /**
-     * Lists all the metadata of the objects in the configured S3 buket prefix
+     * Lists all the metadata of the objects in the configured S3 buket prefix.
      *
      * @return the object metadata array
      */
@@ -93,7 +93,7 @@ public class S3Storage implements Storage {
     }
 
     /**
-     * Gets object length matched with the provided name
+     * Gets object length matched with the provided name.
      *
      * @param name the name of object in the configured bucket prefix
      * @return the object size in bytes
@@ -110,7 +110,7 @@ public class S3Storage implements Storage {
     }
 
     /**
-     * Deletes object matched with the provided name
+     * Deletes object matched with the provided name.
      *
      * @param name the name of object in the configured bucket prefix
      */
@@ -122,7 +122,7 @@ public class S3Storage implements Storage {
     }
 
     /**
-     * Renames object based on the provided names
+     * Renames object based on the provided names.
      *
      * @param from the object name to be renamed from
      * @param to the object name to be renamed to
@@ -140,7 +140,7 @@ public class S3Storage implements Storage {
     }
 
     /**
-     * Reads a range of bytes within an object and writes to a file
+     * Reads a range of bytes within an object and writes to a file.
      *
      * @param name the object name
      * @param fileOffset the range start offset
@@ -169,7 +169,7 @@ public class S3Storage implements Storage {
     }
 
     /**
-     * Reads a whole object and writes to a file
+     * Reads a whole object and writes to a file.
      *
      * @param name the object name
      * @param file the File object to be written
@@ -193,7 +193,7 @@ public class S3Storage implements Storage {
     }
 
     /**
-     * Reads all the objects and writes to a directory
+     * Reads all the objects and writes to a directory.
      *
      * @param dir the directory to write all the objects
      */
@@ -222,6 +222,13 @@ public class S3Storage implements Storage {
         }
     }
 
+    /**
+     * Reads the first and last block of all the objects and writes to the corresponding files.
+     *
+     * @param fsCache the file system cache instance
+     * @param cachedFileMap the map for tracking cached files and blocks
+     * @throws IOException if any i/o error occurs during writing to files
+     */
     public void readAllInitialBlocksToCache(FSCache fsCache,
                                             Map<String, Map<Long,Boolean>> cachedFileMap) throws IOException {
         List<S3Object> objectList = listAllObjects();
@@ -293,7 +300,7 @@ public class S3Storage implements Storage {
     }
 
     /**
-     * Reads a range of bytes from an object and writes to a specific offset of a given buffer
+     * Reads a range of bytes from an object and writes to a specific offset of a given buffer.
      *
      * @param name the object name
      * @param buffer the buffer to populate read data
@@ -329,6 +336,14 @@ public class S3Storage implements Storage {
         return actualLen;
     }
 
+    /**
+     * Reads a specific range of a file and returns the byte array.
+     *
+     * @param name the file name to read
+     * @param offset the start file offset
+     * @param len the total length to read
+     * @return the byte array read
+     */
     public byte[] readBytes(final String name, final int offset, final int len) {
         logger.debug("readBytes {} offset {} length {}", name, offset, len);
 
@@ -352,7 +367,7 @@ public class S3Storage implements Storage {
     }
 
     /**
-     * Writes an object using a given file
+     * Writes an object using a given file.
      *
      * @param filePath the absolute file path
      */
@@ -364,7 +379,7 @@ public class S3Storage implements Storage {
     }
 
     /**
-     * Writes a set of files to S3
+     * Writes a set of files to S3.
      *
      * @param filePaths the list of absolute file paths
      */
@@ -389,7 +404,7 @@ public class S3Storage implements Storage {
     }
 
     /**
-     * Releases the created S3 clients
+     * Releases the created S3 clients.
      */
     public void close() {
         logger.debug("close\n");
@@ -400,32 +415,6 @@ public class S3Storage implements Storage {
 
     private String buildS3PathFromName(String name) {
         return bucket + "/" + prefix + "/" + name;
-    }
-
-    public static class Config {
-        private String bucket;
-        private String prefix;
-
-        public Config(final String bucket, final String prefix) {
-            this.bucket = bucket;
-            this.prefix = prefix;
-        }
-
-        public String getBucket() {
-            return bucket;
-        }
-
-        public void setBucket(String bucket) {
-            this.bucket = bucket;
-        }
-
-        public String getPrefix() {
-            return prefix;
-        }
-
-        public void setPrefix(String prefix) {
-            this.prefix = prefix;
-        }
     }
 
     private record IODescriptor(String name, long offset, long length,

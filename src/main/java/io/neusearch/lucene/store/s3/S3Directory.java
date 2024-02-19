@@ -8,7 +8,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 import io.neusearch.lucene.store.s3.cache.FSCache;
 import io.neusearch.lucene.store.s3.index.S3IndexInput;
-import io.neusearch.lucene.store.s3.storage.S3Storage;
+import io.neusearch.lucene.store.s3.storage.S3StorageConfig;
 import io.neusearch.lucene.store.s3.storage.Storage;
 import io.neusearch.lucene.store.s3.storage.StorageFactory;
 import org.apache.lucene.store.*;
@@ -24,7 +24,7 @@ import static org.apache.lucene.index.IndexFileNames.PENDING_SEGMENTS;
  */
 public class S3Directory extends Directory {
     private static final Logger logger = LoggerFactory.getLogger(S3Directory.class);
-    protected volatile boolean isOpen = true;
+    private volatile boolean isOpen = true;
 
     private static final String storageType = "s3";
 
@@ -47,7 +47,7 @@ public class S3Directory extends Directory {
      * @param blockSize the block size of the FS cache
      * @throws IOException if initializing cache directory failed for reasons
      */
-    public S3Directory(final S3Storage.Config s3Config,
+    public S3Directory(final S3StorageConfig s3Config,
                        final String fsCachePath, final long blockSize) throws IOException {
         super();
 
@@ -70,7 +70,7 @@ public class S3Directory extends Directory {
      * @param fsCachePath the FS path to be used as a buffer/cache for a backend storage
      * @throws IOException if initializing cache directory failed for reasons
      */
-    public S3Directory(final S3Storage.Config s3Config,
+    public S3Directory(final S3StorageConfig s3Config,
                        final String fsCachePath) throws IOException {
         super();
 

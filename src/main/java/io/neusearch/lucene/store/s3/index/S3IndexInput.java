@@ -11,10 +11,15 @@ import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.util.Map;
 
+/**
+ * A IndexInput implementation for a cached S3 object.
+ */
 public class S3IndexInput extends IndexInput {
 
     private static final Logger logger = LoggerFactory.getLogger(S3IndexInput.class);
+    /** The default cache block size */
     public static final long DEFAULT_BLOCK_SIZE = 1024 * 1024;
+    /** The configured cache block size */
     public static long BLOCK_SIZE;
     private final String name;
     private final Storage storage;
@@ -25,6 +30,16 @@ public class S3IndexInput extends IndexInput {
     private final long baseLength;
     private final boolean isSlice;
 
+    /**
+     * Creates and initializes a new S3IndexInput object.
+     *
+     * @param name the file name to open for reading
+     * @param storage the storage instance
+     * @param fsCache the file system cache instance
+     * @param cachedBlockMap the map for tracking cached blocks
+     * @param context the requesting i/o context
+     * @throws IOException if any i/o error occurs while creating this instance
+     */
     public S3IndexInput(final String name, final Storage storage, final FSCache fsCache,
                         final Map<Long,Boolean> cachedBlockMap, final IOContext context)
             throws IOException {
@@ -45,6 +60,18 @@ public class S3IndexInput extends IndexInput {
         logger.debug("S3IndexInput {}", name);
     }
 
+    /**
+     * Creates and initializes a new slice S3IndexInput instance.
+     *
+     * @param name the file name opened for reading
+     * @param sliceDesc the slice description
+     * @param storage the storage instance
+     * @param file the file instance
+     * @param cachedBlockMap the map for tracking cached blocks
+     * @param sliceOffset the slice start offset
+     * @param baseLength the total length of this file
+     * @param sliceInput the IndexInput instance for this slice
+     */
     public S3IndexInput(final String name, final String sliceDesc, final Storage storage,
                         final RandomAccessFile file, final Map<Long,Boolean> cachedBlockMap,
                         final long sliceOffset, final long baseLength,
